@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
+import * as nodePath from 'node:path';
+import * as os from 'node:os';
 import type {
   AgentState,
   ApprovalRequest,
@@ -46,6 +48,8 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
   private agentLoop: AgentLoop;
   private currentChatId: string | null = null;
   private todos: TodoItem[] = [];
+  private streamingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private statePushQueued = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -89,9 +93,23 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
           if (reasoning !== undefined && reasoning.length > 0) {
             msg.reasoning = reasoning;
           }
-          this.post({ type: 'MESSAGE_UPDATE', message: msg });
+          // Throttle: send MESSAGE_UPDATE at most once per 100ms per message
+          // to prevent UI freezes from rapid token-by-token updates.
+          if (!this.streamingTimers.has(id)) {
+            this.streamingTimers.set(id, setTimeout(() => {
+              this.streamingTimers.delete(id);
+              const latest = this.history.find((m) => m.id === id);
+              if (latest) this.post({ type: 'MESSAGE_UPDATE', message: latest });
+            }, 100));
+          }
         },
         onAssistantEnd: (id, content, reasoning) => {
+          // Clear any pending throttle timer so the final update is sent immediately.
+          const pendingTimer = this.streamingTimers.get(id);
+          if (pendingTimer) {
+            clearTimeout(pendingTimer);
+            this.streamingTimers.delete(id);
+          }
           const msg = this.history.find((m) => m.id === id);
           if (!msg) return;
           // CRITICAL FIX (bug J): Don't overwrite content with empty string.
@@ -295,7 +313,13 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
       id: this.currentChatId ?? makeId(),
       title,
       ts: Date.now(),
-      messages: this.history,
+      messages: this.history.map(m => ({
+        ...m,
+        content:
+          typeof m.content === 'string' && m.content.length > 50_000
+            ? m.content.slice(0, 50_000) + '\n[...truncated in saved history...]'
+            : m.content,
+      })),
       model: this.currentModel,
     };
     this.currentChatId = entry.id;
@@ -309,6 +333,29 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
       FibonacciAgentViewProvider.HISTORY_KEY,
       capped
     );
+    // FIX (unimplemented historyPath): the fibonacci.historyPath setting was
+    // documented but never used — best-effort mirror the saved chat to disk
+    // so users can access their transcripts outside globalState.
+    this.mirrorToDisk(entry);
+  }
+
+  /** Best-effort: write the chat entry as JSON under fibonacci.historyPath. */
+  private mirrorToDisk(entry: ChatHistoryEntry): void {
+    try {
+      const raw = vscode.workspace
+        .getConfiguration('fibonacci')
+        .get<string>('historyPath');
+      if (!raw) return;
+      const expanded = raw.startsWith('~')
+        ? nodePath.join(os.homedir(), raw.slice(1))
+        : raw;
+      fs.mkdirSync(expanded, { recursive: true });
+      const file = nodePath.join(expanded, `${entry.id}.json`);
+      fs.writeFileSync(file, JSON.stringify(entry, null, 2), 'utf-8');
+    } catch (err) {
+      // Never fail the chat because of a disk-mirror problem.
+      console.debug('[fibonacci-agent] historyPath mirror failed:', err);
+    }
   }
 
   private getHistory(): ChatHistoryEntry[] {
@@ -385,8 +432,8 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
       // Call the model to improve the prompt
       const improvementPrompt = `You are a prompt improvement assistant. Rewrite the following user prompt to be clearer, more specific, and more actionable. Preserve the original intent but make it more effective. Return ONLY the improved prompt without any explanation or labels.\n\nOriginal prompt:\n${text}`;
       
-      // Use the FibonacciClient to send this request
-      const improved = await this.deps.client.improvePrompt(improvementPrompt);
+      // Use the FibonacciClient to send this request (with the current model)
+      const improved = await this.deps.client.improvePrompt(improvementPrompt, this.currentModel);
       
       // Send the improved version back to the webview
       const finalImproved = improved || text; // fallback to original if empty
@@ -649,7 +696,7 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
         const cfg = vscode.workspace.getConfiguration('fibonacci');
         const keys = [
           'autoApproveMode', 'enableMCP', 'hermesMode', 'showReasoning',
-          'parallelToolCalls', 'maxIterations', 'themeBehavior', 'startupView',
+          'parallelToolCalls', 'maxIterations', 'themeBehavior', 'uiStyle', 'startupView',
           'notifyOnTaskComplete', 'contextCompression', 'toolOverrides',
         ];
         for (const key of keys) {
@@ -664,7 +711,7 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
         for (const key of [
           'apiKey', 'baseURL', 'defaultModel', 'professionalModel', 'language',
           'enableMCP', 'autoApproveMode', 'maxIterations', 'hermesMode',
-          'showReasoning', 'parallelToolCalls', 'themeBehavior', 'startupView',
+          'showReasoning', 'parallelToolCalls', 'themeBehavior', 'uiStyle', 'startupView',
           'notifyOnTaskComplete', 'contextCompression', 'toolOverrides',
           'modelAssignment', 'mcpServers', 'providers',
         ]) {
@@ -718,8 +765,14 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
 
     this.setBusy(true);
     try {
-      // Determine initial mode from the [PLAN MODE] tag the webview adds.
-      const initialMode = text.startsWith('[PLAN MODE]') ? 'plan' : 'coding';
+      // Determine initial mode from the mode tag the webview adds.
+      // FIX: recognize ALL mode tags ([PLAN/ASK/DEBUG/AUTO MODE]) — previously
+      // only [PLAN MODE] switched the host-side mode.
+      const MODE_TAG_RE = /^\[(PLAN|ASK|DEBUG|AUTO|CODING) MODE\]/i;
+      const tagMatch = text.match(MODE_TAG_RE);
+      const initialMode = (tagMatch
+        ? (tagMatch[1].toLowerCase() as 'plan' | 'ask' | 'debug' | 'auto' | 'coding')
+        : 'coding');
       await this.agentLoop.run(
         this.history,
         this.currentModel,
@@ -761,19 +814,24 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
   }
 
   private pushFullState(): void {
-    const state: AgentState = {
-      messages: this.history,
-      pendingApprovals: this.pendingApprovals,
-      isBusy: this.isBusy,
-      currentModel: this.currentModel,
-      models: getModelChoices(),
-      config: getCurrentConfig(),
-      mcpServers:
-        vscode.workspace
-          .getConfiguration('fibonacci')
-          .get<McpServerConfig[]>('mcpServers') ?? [],
-    };
-    this.post({ type: 'STATE', state });
+    if (this.statePushQueued) return;
+    this.statePushQueued = true;
+    setTimeout(() => {
+      this.statePushQueued = false;
+      const state: AgentState = {
+        messages: this.history,
+        pendingApprovals: this.pendingApprovals,
+        isBusy: this.isBusy,
+        currentModel: this.currentModel,
+        models: getModelChoices(),
+        config: getCurrentConfig(),
+        mcpServers:
+          vscode.workspace
+            .getConfiguration('fibonacci')
+            .get<McpServerConfig[]>('mcpServers') ?? [],
+      };
+      this.post({ type: 'STATE', state });
+    }, 50);
   }
 
   private getHtml(webview: vscode.Webview, distRoot: vscode.Uri): string {
@@ -789,9 +847,14 @@ export class FibonacciAgentViewProvider implements vscode.WebviewViewProvider {
       `img-src ${webview.cspSource} https: data:`,
       `style-src ${webview.cspSource} 'unsafe-inline' https://cdn.jsdelivr.net`,
       `font-src ${webview.cspSource} https: data:`,
-      `script-src ${webview.cspSource} 'unsafe-inline' 'nonce-${nonce}'`,
+      // FIX (XSS defense-in-depth): the script is nonce-loaded — drop
+      // 'unsafe-inline' so injected inline handlers can't execute even if a
+      // renderer bug slips HTML through.
+      `script-src ${webview.cspSource} 'nonce-${nonce}'`,
       `worker-src ${webview.cspSource} blob:`,
-      `connect-src ${webview.cspSource} http://my.fibonacci.monster https://my.fibonacci.monster https:`,
+      // Tightened: only the API origins + webview resources. The webview does
+      // not need general https: connectivity.
+      `connect-src ${webview.cspSource} http://my.fibonacci.monster https://my.fibonacci.monster`,
     ].join('; ');
 
     return /* html */ `<!DOCTYPE html>

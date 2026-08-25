@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '../types';
 import { schema, type ToolContext } from '../core/toolRegistry';
 import type { ToolRegistry } from '../core/toolRegistry';
+import * as nodePath from 'node:path';
 
 /**
  * Git tools (read-only):
@@ -107,8 +108,11 @@ async function runGit(
   ctx?: ToolContext
 ): Promise<{ ok: boolean; output: string; meta?: Record<string, unknown> }> {
   const { execFile } = await import('node:child_process');
-  // Resolve cwd to workspace root if relative
-  const finalCwd = cwd || ctx?.workspaceRoot || process.cwd();
+  // FIX (cwd bug): the callers previously passed '.' as cwd, which is truthy
+  // and short-circuited the ctx.workspaceRoot fallback — so git ran against
+  // the extension host's process.cwd() (typically the VS Code install dir)
+  // instead of the workspace. Resolve relative cwds against the workspace root.
+  const finalCwd = nodePath.resolve(ctx?.workspaceRoot || process.cwd(), cwd || '.');
 
   return new Promise((resolve) => {
     const child = execFile(
@@ -122,8 +126,17 @@ async function runGit(
       },
       (err, stdout, stderr) => {
         if (err) {
-          // git exits with code 1 for empty diffs in some setups; treat as ok
           const combined = (stdout || '') + (stderr ? `\n[stderr]\n${stderr}` : '');
+          const errText = `${err.message}\n${stderr ?? ''}`;
+          // Fatal conditions — never mask these as success.
+          if (/not a git repository/i.test(errText) || err.code === 128) {
+            resolve({
+              ok: false,
+              output: `git ${args.join(' ')} failed: ${combined.trim() || err.message}`,
+            });
+            return;
+          }
+          // git exits with code 1 for empty diffs in some setups; treat as ok
           if (combined.trim().length > 0) {
             resolve({ ok: true, output: combined.slice(0, 50_000) || '(no output)' });
           } else {

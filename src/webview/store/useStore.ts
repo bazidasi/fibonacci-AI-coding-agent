@@ -37,6 +37,8 @@ export interface ToolListItem {
   category: ToolCategory;
   readOnly: boolean;
   requiresApproval: boolean;
+  /** Present on host ToolDefinition; used by PermissionsSection filtering. */
+  hidden?: boolean;
 }
 
 interface Store extends UIState {
@@ -88,6 +90,13 @@ interface Store extends UIState {
 
 const initialConfig: AgentConfig | null = null;
 
+// FIX (locale switch not re-rendering): the previous implementation created
+// the `t` function once, so its reference never changed and components that
+// selected only `s.t` never re-rendered when the locale changed. We now
+// re-create `t` whenever the locale is set.
+const makeT = (locale: Locale) => (key: string, fallback?: string) =>
+  translate(locale, key, fallback);
+
 export const useStore = create<Store>((set, get) => ({
   activeTab: 'chat',
   expandedToolIds: {},
@@ -110,6 +119,7 @@ export const useStore = create<Store>((set, get) => ({
   modeSwitchRequest: null,
   skills: [],
   toolList: [],
+  t: makeT('fa'),
 
   setActiveTab: (tab) => set({ activeTab: tab }),
   setAgentMode: (mode) => set({ agentMode: mode }),
@@ -137,7 +147,7 @@ export const useStore = create<Store>((set, get) => ({
   },
   setDraftApiKey: (key) => set({ draftApiKey: key }),
   setError: (msg) => set({ lastError: msg }),
-  setLocale: (l) => set({ locale: l }),
+  setLocale: (l) => set({ locale: l, t: makeT(l) }),
   hydrateFromState: (state) =>
     set({
       messages: state.messages,
@@ -148,10 +158,19 @@ export const useStore = create<Store>((set, get) => ({
       config: state.config,
       mcpServers: state.mcpServers,
       locale: (state.config?.language as Locale) ?? 'fa',
+      t: makeT((state.config?.language as Locale) ?? 'fa'),
+      // Fresh chat load — drop per-message UI expansion state.
+      expandedToolIds: {},
     }),
   appendMessage: (m) => set((s) => ({ messages: [...s.messages, m] })),
   updateMessage: (m) =>
-    set((s) => ({ messages: s.messages.map((x) => (x.id === m.id ? m : x)) })),
+    set((s) => {
+      const idx = s.messages.findIndex((x) => x.id === m.id);
+      if (idx === -1) return { messages: [...s.messages, m] };
+      const next = [...s.messages];
+      next[idx] = m;
+      return { messages: next };
+    }),
   removeMessage: (id) => set((s) => ({ messages: s.messages.filter((m) => m.id !== id) })),
   addApproval: (req) =>
     set((s) => ({
@@ -166,10 +185,13 @@ export const useStore = create<Store>((set, get) => ({
     })),
   setModels: (models, current) => set({ models, currentModel: current }),
   setConfig: (config) =>
-    set({ config, locale: (config.language as Locale) ?? 'fa' }),
+    set({
+      config,
+      locale: (config.language as Locale) ?? 'fa',
+      t: makeT((config.language as Locale) ?? 'fa'),
+    }),
   setMcpServers: (servers) => set({ mcpServers: servers }),
   setHistory: (entries) => set({ history: entries }),
   setSkills: (skills) => set({ skills }),
   setToolList: (tools) => set({ toolList: tools }),
-  t: (key, fallback) => translate(get().locale, key, fallback),
 }));

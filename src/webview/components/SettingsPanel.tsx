@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useStore } from '../store/useStore';
 import type { AgentMode, ProviderConfig } from '@shared/index';
 import { GeneralSection } from './settings/GeneralSection';
@@ -22,8 +22,15 @@ export const SettingsPanel: React.FC = () => {
 
   // Local state for model assignments
   const [modelAssignments, setModelAssignments] = useState<Record<AgentMode, string>>(
-    config?.modelAssignments ?? {}
+    config?.modelAssignments ?? ({} as Record<AgentMode, string>)
   );
+
+  // FIX (stale drafts): re-sync the drafts when a fresh CONFIG push arrives,
+  // otherwise edits after a settings import/reset operated on stale bases.
+  useEffect(() => {
+    setProviders(config?.providers ?? []);
+    setModelAssignments(config?.modelAssignments ?? ({} as Record<AgentMode, string>));
+  }, [config?.providers, config?.modelAssignments]);
 
   if (!config) return null;
 

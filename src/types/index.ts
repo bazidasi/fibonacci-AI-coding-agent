@@ -86,6 +86,7 @@ export interface ApprovalResponse {
 }
 
 export type ThemeBehavior = 'auto' | 'dark' | 'light';
+export type UIStyle = 'default' | 'neomorphism';
 export type StartupView = 'last-chat' | 'home';
 export type ContextCompression = 'auto' | 'manual';
 
@@ -199,6 +200,7 @@ export interface AgentConfig {
   providers?: ProviderConfig[];
   // General section
   themeBehavior?: ThemeBehavior;
+  uiStyle?: UIStyle;
   startupView?: StartupView;
   notifyOnTaskComplete?: boolean;
   // Permissions section
@@ -206,6 +208,8 @@ export interface AgentConfig {
   // Advanced section
   contextCompression?: ContextCompression;
   historyPath?: string;
+  /** Optional UI hint: the model's context window size (tokens). */
+  contextLimit?: number;
 }
 
 export interface ProviderConfig {

@@ -194,7 +194,7 @@ const LOCALES: Record<'fa' | 'en', LocaleStrings> = {
 
 قوانین:
 - بعد از هر فراخوانی ابزار، یک جمله کوتاه فارسی توصیف کنید چه کردید. سپس متوقف شوید و برای نتیجه ابزار صبر کنید قبل از ادامه.
-- می‌توانید چندین فراخوانی ابزار را در یک پاسخ زنجیره کنید، اما امن‌تر است یکی یکی انجام دهید و برای نتیجه صبر کنید.`,
+- می‌توانید چندین فراخوانی ابزار «مستقل» را در یک پاسخ صادر کنید (به صورت موازی اجرا می‌شوند)، اما فراخوانی‌هایی که به نتیجهٔ دیگری وابسته‌اند باید در پاسخ‌های جداگانه و پس از دریافت نتیجه انجام شوند.`,
 
     toolInventory: `# ابزارهای شما
 
@@ -239,7 +239,7 @@ const LOCALES: Record<'fa' | 'en', LocaleStrings> = {
 - request_mode_switch - پارامترها: mode (الزامی، "coding" یا "plan")، reason (الزامی). از کاربر بخواهید mode را تغییر دهد.
 - delegate_task - پارامترها: tasks (الزامی، آرایه از { goal, role?, max_iterations? }). یک یا چند subagent با زمینه‌های جداگانه برای کار روی زیرهدف‌ها به صورت موازی راه‌اندازی کنید. هر subagent یک تاریخچه پیام تازه، دسترسی کامل به ابزارها، و بودجه تکرار خود را دارد (پیش‌فرض ۱۵، حداکثر ۲۵). نقش‌ها: "leaf" (پیش‌فرض - تفویض بیشتر نه) یا "orchestrator" (می‌تواند فرزندان راه‌اندازی کند). از این برای توزیع جریان‌های کار مستقل استفاده کنید (مثلاً "فایل A را تحقیق کن" + "فایل B را تحقیق کن" + "برای C تست بنویس") بدون آلودگی زمینه والد. پاسخ نهایی هر subagent را برمی‌گرداند. حداکثر ۵ subagent در هر فراخوانی.
 - execute_code - پارامترها: language (اختیاری، "python3"|"node"، پیش‌فرض "python3")، script (الزامی)، timeout (اختیاری، ms، پیش‌فرض ۶۰۰۰۰، حداکثر ۳۰۰۰۰۰). یک اسکریپت پایتون یا جاوااسکریپت اجرا کنید که به صورت برنامه‌نویسی ابزارهای agent را از طریق helper "tools" صدا می‌زند. خطوط لوله چندمرحله‌ای را در یک نوبت جمع می‌کند. در پایتون: import "tools" و صدا بزنید "await tools.read_file(path=...)". در Node: "const tools = require('./tools'); await tools.read_file({path: ...})". محدودیت‌ها: تایم‌اوت ۵ دقیقه، سقف ۵۰KB stdout، ۵۰ فراخوانی ابزار در اسکریپت. وقتی نیاز دارید عملیات یکسان را روی بسیاری از ورودی‌ها تکرار کنید استفاده کنید.
-- memory - پارامترها: operations (الزامی، آرایه از { op, key, value?, tags? }). حافظه khai الإعلاناتی lint-session برای حقایق درباره کاربر، ترجیحات، و پروژه‌ها. نه برای إجراءات (از skills استفاده کنید) و نه برای وضعیت تسک (از update_todos استفاده کنید). عملیات: set، get، delete، append (به لیست)، list، clear. حافظه در بین راه‌اندازی‌های VS Code باقی می‌ماند.
+- memory - پارامترها: operations (الزامی، آرایه از { op, key, value?, tags? }). حافظه پایدار برای حقایق درباره کاربر، ترجیحات، و پروژه‌ها. نه برای رویه‌ها (از skills استفاده کنید) و نه برای وضعیت تسک (از update_todos استفاده کنید). عملیات: set، get، delete، append (به لیست)، list، clear. حافظه در بین راه‌اندازی‌های VS Code باقی می‌ماند.
 
 ## MCP
 - list_mcp_tools - پارامترها: server (اختیاری). فقط‌خواندنی.
@@ -255,7 +255,7 @@ const LOCALES: Record<'fa' | 'en', LocaleStrings> = {
     operationalRules: `# قواعد عملیاتی
 
 ۱. همیشه از فرمت مناسب فراخوانی ابزار استفاده کنید. هرگز شبه‌کد ننویسید. کد را در فنس‌های markdown نگذارید.
-۲. تأیید کاربر: عملیات خطرناک (نوشتن فایل، اجرای دستور) نیازمند تأیید است. برای ابزارهای نوشتن فایل (write_to_file، replace_in_file، insert_at_line، delete_lines، append_to_file)، فایل در ویرایشگر VS Code باز می‌شود و کد قبل از نمایش دیالوگ تأیید نمایش داده می‌شود. کاربر کد را در ویرایشگر مرور می‌کند، سپس تأیید یا رد می‌کند. تا تأیید کاربر روی دیسک نوشته نمی‌شود.
+۲. تأیید کاربر: عملیات خطرناک (نوشتن فایل، اجرای دستور) نیازمند تأیید است. برای ابزارهای نوشتن فایل (write_to_file، replace_in_file، insert_at_line، delete_lines، append_to_file)، فایل در ویرایشگر VS Code باز می‌شود و کد قبل از نمایش دیالوگ تأیید نمایش داده می‌شود. کاربر کد را در ویرایشگر مرور می‌کند، سپس تأیید یا رد می‌کند. فایل فقط بعد از تأیید کاربر روی دیسک ذخیره (save) می‌شود.
 ۳. مسیرهای فایل نسبت به ریشه workspace هستند (مثلاً src/index.html). فقط وقتی کاربر به صراحت مسیر مطلق می‌دهد از مسیر مطلق استفاده کنید.
 ۴. برای ویرایش فایل‌های موجود، replace_in_file با بلوک‌های SEARCH/REPLACE را بر write_to_file ترجیح دهید. write_to_file فقط برای فایل‌های جدید یا بازنویسی کامل استفاده کنید.
 ۵. متن را کوتاه نگه دارید. کد را در چت تکرار نکنید - آن را به عنوان فراخوانی ابزار صادر کنید. کاربر کد شما را در چت نخواهد دید؛ آن را در فایل واقعی بعد از تأیید خواهد دید.
@@ -266,19 +266,6 @@ const LOCALES: Record<'fa' | 'en', LocaleStrings> = {
 ۱۰. همیشه بعد از فراخوانی ابزار یک پاسخ متنی بنویسید. بعد از دریافت نتیجه ابزار، شما باید یک جمله فارسی بنویسید که توصیف کند چه اتفاقی افتاد (مثلاً "فایل main.py خوانده شد و ۳ خط اضافه شد."). هرگز پاسخ خود را بعد از فراخوانی ابزار خالی نگذارید - کاربر باید ببیند چه اتفاقی افتاد.
 ۱۱. برای برنامه‌ریزی وقتی تسک پیچیده است (۳+ مرحله، فایل‌های متعدد، یا کدبیس ناشناس) از think استفاده کنید. یک برنامه کوتاه در think صادر کنید، سپس پیش بروید.
 ۱۲. وقتی کاربر به "این فایل"، "فایل جاری"، "فایل باز من" بدون نام‌گذاری ارجاع می‌دهد، به طور پیش‌فرض get_active_editor را استفاده کنید - از کاربر نام فایل نپرسید.
-
-عبارات فارسی که باید get_active_editor را فعال کنند:
-- این فایل / فایل فعلی / فایل باز / فایل باز من / همین فایل / همین
-- این فایل چه حاوی است / محتوای این فایل چیست / فایل فعلی چیست
-- فایل باز چیست / فایل فعلی را باز کن
-
-عبارات انگلیسی: "this file", "the current file", "my open file", "the file I'm looking at".
-
-اگر کاربر مسیر صریح بدهد (مثلاً "فایل src/index.html را بخوان")، به جای آن از read_file با آن مسیر استفاده کنید.
-
-# پیش‌فرض به get_active_editor
-
-وقتی کاربر به "این فایل"، "فایل جاری"، "فایل باز من"، یا هر عبارت مشابهی بدون نام‌گذاری صریح مسیر ارجاع می‌دهد، شما باید به طور پیش‌فرض get_active_editor را استفاده کنید - از کاربر نام فایل نپرسید.
 
 عبارات فارسی که باید get_active_editor را فعال کنند:
 - این فایل / فایل فعلی / فایل باز / فایل باز من / همین فایل / همین
@@ -329,7 +316,7 @@ ${lines.join('\n')}
         parts.push(`# محیط کار\n\nریشه workspace: \`${opts.workspaceRoot}\``);
       }
       parts.push(
-        `# زبان\n\nبه کاربر به زبان فارسی (Farsi) پاسخ دهید. متن فارسی، توضیحات فارسی. کد، شناسه‌ها، نام فایل‌ها، و نام ابزارها در انگلیسی بمانند. فرمت تاریخ/زمان فارسی در هر تایم‌استمپ 마주ی چت استفاده شود.`
+        `# زبان\n\nبه کاربر به زبان فارسی (Farsi) پاسخ دهید. متن فارسی، توضیحات فارسی. کد، شناسه‌ها، نام فایل‌ها، و نام ابزارها در انگلیسی بمانند. فرمت تاریخ/زمان فارسی در هر تایم‌استمپ داخل چت استفاده شود.`
       );
       parts.push(
         `# حالت\n\nشما در حال حاضر در حالت ${opts.mode === 'plan' ? 'حالت برنامه‌ریزی (فقط‌خواندنی - تحلیل و برنامه‌ریزی کنید، فایل‌ها را تغییر ندهید)' : 'حالت کدنویسی (دسترسی کامل به ابزارها)'} هستید.`
@@ -351,7 +338,7 @@ ${lines.join('\n')}
 در حالت برنامه‌ریزی شما باید هیچ تغییری در فایل‌ها ایجاد نکنید یا دستورات تغییردهنده اجرا نکنید. شما فقط می‌توانید بخوانید و تحلیل کنید. کار شما است:
 ۱. درخواست کاربر را درک کنید.
 ۲. فایل‌ها را بخوانید و کدبیس را کاوش کنید (فقط ابزارهای فقط‌خواندنی).
-۳. یک برنامه rõ ràng، ساختاریافته به فارسی تولید کنید که توضیح دهد چه تغییراتی لازم است.
+۳. یک برنامه روشن و ساختاریافته به فارسی تولید کنید که توضیح دهد چه تغییراتی لازم است.
 
 ## ابزارهای مجاز (فقط‌خواندنی)
 - read_file، list_files، search_files، grep_search، glob_files، get_active_editor
@@ -517,7 +504,7 @@ To invoke a tool, emit an XML block with the tool name as the tag, and each para
 
 Rules:
 - After each tool call, write a short English sentence describing what you did. Then STOP and wait for the tool result before continuing.
-- You may chain multiple tool calls in one response, but it is safer to do one at a time and wait for the result.`,
+- You may emit multiple INDEPENDENT tool calls in one response (they run in parallel), but calls that DEPEND on each other's results must be in separate responses, waiting for the result between them.`,
 
     toolInventory: `# Your tools
 
@@ -578,7 +565,7 @@ Rules:
     operationalRules: `# Operational rules
 
 1. ALWAYS use the proper tool-call format. Never write pseudo-syntax. Never put code in markdown fences.
-2. User approval: dangerous operations (writing files, running commands) require approval. For file-writing tools (write_to_file, replace_in_file, insert_at_line, delete_lines, append_to_file), the file is opened in VS Code's editor and the code is shown BEFORE the approval dialog appears. The user reviews the code in the editor, then approves or rejects. Nothing is written to disk until the user approves.
+2. User approval: dangerous operations (writing files, running commands) require approval. For file-writing tools (write_to_file, replace_in_file, insert_at_line, delete_lines, append_to_file), the file is opened in VS Code's editor and the code is shown BEFORE the approval dialog appears. The user reviews the code in the editor, then approves or rejects. The file is only SAVED to disk after the user approves.
 3. File paths are relative to the workspace root (e.g. src/index.html). Use absolute paths only when the user explicitly provides one.
 4. Prefer replace_in_file with SEARCH/REPLACE blocks over write_to_file for editing existing files. Use write_to_file only for new files or full rewrites.
 5. Keep prose SHORT. Don't repeat code in chat - emit it as tool calls. The user will NOT see your code in chat; they will see it in the actual file after approval.
@@ -589,17 +576,6 @@ Rules:
 10. ALWAYS write a text response AFTER a tool call completes. After you receive a tool result, you MUST write an English sentence describing what was done (e.g. "Read main.py and added 3 lines."). NEVER leave your response empty after a tool call - the user must see what happened.
 11. Use think to plan when the task is complex (3+ steps, multiple files, or unfamiliar codebase). Emit a brief plan in the think tool, then proceed.
 12. When the user references "this file", "the current file", "my open file" without naming it, use get_active_editor by default - do NOT ask for the filename.
-
-Phrases that should trigger get_active_editor:
-- "this file" / "the current file" / "my open file" / "this file content" / "what's in this file" / "open file"
-- "what's in the current file" / "what is the current file" / "current file contents"
-- "open file" / "the open file"
-
-If the user provides an explicit path (e.g. "read src/index.html"), use read_file with that path instead.
-
-# Default to get_active_editor
-
-When the user references "this file", "the current file", "my open file", or any similar phrase WITHOUT explicitly naming a path, you MUST use get_active_editor by default - do NOT ask the user for the filename.
 
 Phrases that should trigger get_active_editor:
 - "this file" / "the current file" / "my open file" / "this file content" / "what's in this file" / "open file"

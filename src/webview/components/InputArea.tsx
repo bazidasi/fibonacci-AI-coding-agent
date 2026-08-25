@@ -151,10 +151,12 @@ export const InputArea: React.FC = () => {
               onClick={improvePrompt}
               disabled={!text.trim() || isBusy}
               className="w-6 h-6 flex items-center justify-center rounded-sm text-text-muted hover:text-text-primary hover:bg-hover disabled:opacity-30"
-              title={t('chat.improvePrompt')}
+              title={t('chat.promptEngineer')}
             >
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L9.5 8.5 3 12l6.5 3.5L12 22l2.5-6.5L22 12l-6.5-3.5z" />
+                <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+                <path d="M20 3v4" />
+                <path d="M22 5h-4" />
               </svg>
             </button>
           </div>

@@ -51,6 +51,10 @@ media/*.svg
 # Scripts directory
 scripts/
 
+# Test tooling
+test/
+vitest.config.mjs
+
 # Binaries / executables that shouldn't ship
 mimo.exe
 *.exe

@@ -25,15 +25,18 @@ export const SettingRow: React.FC<{
 );
 
 /* ── Toggle switch ── */
-export const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }> = ({ checked, onChange, disabled }) => (
-  <label className={`cursor-pointer ${disabled ? 'opacity-50' : ''}`}>
+export const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; 'aria-label'?: string }> = ({ checked, onChange, disabled, 'aria-label': ariaLabel }) => (
+  <label className={`relative inline-flex items-center cursor-pointer ${disabled ? 'opacity-50' : ''}`}>
     <input
       type="checkbox"
       checked={checked}
       onChange={(e) => onChange(e.target.checked)}
       disabled={disabled}
-      className="w-4 h-4 rounded border-border-input text-brand focus:ring-brand focus:ring-1"
+      aria-label={ariaLabel}
+      className="sr-only peer"
     />
+    <div className="w-9 h-5 bg-elevated-2 rounded-full peer peer-checked:bg-brand border border-border-input peer-checked:border-brand transition-colors duration-fast"></div>
+    <span className={`absolute left-0.5 top-0.5 bg-white rounded-full h-4 w-4 transition-transform duration-fast shadow-sm ${checked ? 'translate-x-4' : 'translate-x-0'}`}></span>
   </label>
 );
 
@@ -58,7 +61,8 @@ export const Select: React.FC<{
 /* ── Text input ── */
 export const TextInput: React.FC<{
   value: string;
-  onChange: (v: string) => void;
+  /** Optional so read-only displays (export boxes etc.) can omit it. */
+  onChange?: (v: string) => void;
   placeholder?: string;
   dir?: 'ltr' | 'rtl';
   readOnly?: boolean;
@@ -68,7 +72,7 @@ export const TextInput: React.FC<{
   <input
     type={type}
     value={value}
-    onChange={(e) => onChange(e.target.value)}
+    onChange={onChange ? (e) => onChange(e.target.value) : undefined}
     placeholder={placeholder}
     dir={dir}
     readOnly={readOnly}
@@ -116,8 +120,8 @@ export const MaskedInput: React.FC<{
       <button
         type="button"
         onClick={() => setRevealed(!revealed)}
+        aria-label={revealed ? 'Hide value' : 'Show value'}
         className="absolute end-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary transition-colors"
-        tabIndex={-1}
       >
         {revealed ? (
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

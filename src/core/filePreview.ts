@@ -125,15 +125,20 @@ async function openFileForPreview(filePath: string, workspaceRoot?: string): Pro
 }> {
   const absPath = resolvePath(filePath, workspaceRoot);
 
-  // CRITICAL: Check if a DIRECTORY exists at this path (can happen if a
-  // previous run created a partial-path directory like "task" or "task_").
-  // If so, remove it — we need a FILE at this path, not a directory.
+  // CRITICAL FIX (pre-approval data loss): if a DIRECTORY exists at this
+  // path, NEVER delete it — the model may have emitted a path that collides
+  // with a real folder and rmSync(recursive) would wipe its contents BEFORE
+  // any user approval. Fail the preview instead; the caller surfaces a clear
+  // error to the model.
   try {
     const stat = fs.statSync(absPath);
     if (stat.isDirectory()) {
-      fs.rmSync(absPath, { recursive: true, force: true });
+      throw new Error(
+        `Refusing to write: "${absPath}" is an existing directory. Choose a different file path.`
+      );
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('Refusing to write:')) throw err;
     // Path doesn't exist — that's fine, we'll create the file below.
   }
 
@@ -573,10 +578,11 @@ export async function revertPreview(handle: PreviewHandle): Promise<void> {
     // autoSave already wrote content to it or if the file is briefly locked.
     try {
       if (fs.existsSync(absPath)) {
-        // Check if it's a directory (shouldn't be, but just in case)
+        // This file was created BY the preview flow, so it must be a plain
+        // file. Never recursive-delete anything here.
         const stat = fs.statSync(absPath);
         if (stat.isDirectory()) {
-          fs.rmSync(absPath, { recursive: true, force: true });
+          console.error('[fibonacci-agent] Refusing to delete a directory on revert:', absPath);
         } else {
           await unlinkSyncWithRetry(absPath);
         }
@@ -704,30 +710,9 @@ async function unlinkSyncWithRetry(filePath: string, maxRetries = 5): Promise<vo
 // SEARCH/REPLACE diff application (copied from fileTools.ts to avoid circular import)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SEARCH_REPLACE_RE =
-  /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/g;
-
-export function applySearchReplace(original: string, diff: string): string {
-  let result = original;
-  let matches = 0;
-  let m: RegExpExecArray | null;
-  SEARCH_REPLACE_RE.lastIndex = 0;
-  while ((m = SEARCH_REPLACE_RE.exec(diff)) !== null) {
-    const [, search, replace] = m;
-    const idx = result.indexOf(search);
-    if (idx === -1) {
-      throw new Error(
-        `SEARCH block not found. Make sure the text matches the file exactly:\n${search.slice(0, 120)}…`
-      );
-    }
-    result = result.slice(0, idx) + replace + result.slice(idx + search.length);
-    matches++;
-  }
-  if (matches === 0) {
-    throw new Error('No valid SEARCH/REPLACE block found.');
-  }
-  return result;
-}
+// SEARCH/REPLACE logic lives in ./searchReplace (pure, VS Code-free, tested)
+export { applySearchReplace } from './searchReplace';
+import { applySearchReplace } from './searchReplace';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool name → preview function mapping

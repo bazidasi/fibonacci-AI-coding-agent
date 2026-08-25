@@ -2,7 +2,7 @@
   "name": "fibonacci-agent",
   "displayName": "Fibonacci AI Agent",
   "description": "AI-powered coding assistant with Fibonacci patterns for VS Code",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "publisher": "amirhosseinmehrdoost",
   "author": {
     "name": "amirhossein mehrdoost",
@@ -163,7 +163,11 @@
         "fibonacci.autoApproveMode": {
           "type": "string",
           "default": "none",
-          "enum": ["none", "read-only", "all"],
+          "enum": [
+            "none",
+            "read-only",
+            "all"
+          ],
           "enumDescriptions": [
             "تأیید خودکار غیرفعال — هر ابزار نیاز به تأیید دستی دارد",
             "تأیید خودکار ابزارهای فقط‌خواندنی",
@@ -194,7 +198,11 @@
         "fibonacci.themeBehavior": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "dark", "light"],
+          "enum": [
+            "auto",
+            "dark",
+            "light"
+          ],
           "enumDescriptions": [
             "دنبال کردن پوسته VS Code",
             "همیشه تاریک",
@@ -202,10 +210,26 @@
           ],
           "description": "رفتار پوسته رابط کاربری"
         },
+        "fibonacci.uiStyle": {
+          "type": "string",
+          "default": "default",
+          "enum": [
+            "default",
+            "neomorphism"
+          ],
+          "enumDescriptions": [
+            "طراحی پیش‌فرض",
+            "طراحی نئومورفیسم"
+          ],
+          "description": "سبک رابط کاربری"
+        },
         "fibonacci.startupView": {
           "type": "string",
           "default": "last-chat",
-          "enum": ["last-chat", "home"],
+          "enum": [
+            "last-chat",
+            "home"
+          ],
           "enumDescriptions": [
             "بازیابی آخرین گفت‌وگو",
             "نمایش صفحه اصلی"
@@ -220,7 +244,10 @@
         "fibonacci.contextCompression": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "manual"],
+          "enum": [
+            "auto",
+            "manual"
+          ],
           "enumDescriptions": [
             "فشرده‌سازی خودکار زمینه",
             "فشرده‌سازی دستی"
@@ -236,6 +263,33 @@
           "type": "object",
           "default": {},
           "description": "بازنویسی ابزار — کلیدها نام ابزارها، مقدار true به معنای اجبار تأیید"
+        },
+        "fibonacci.modelAssignment": {
+          "type": "object",
+          "default": {},
+          "description": "مدل اختصاص‌داده‌شده به هر حالت عامل",
+          "properties": {
+            "coding": {
+              "type": "string",
+              "description": "مدل حالت کدنویسی"
+            },
+            "plan": {
+              "type": "string",
+              "description": "مدل حالت برنامه‌ریزی"
+            },
+            "ask": {
+              "type": "string",
+              "description": "مدل حالت پرسش"
+            },
+            "debug": {
+              "type": "string",
+              "description": "مدل حالت اشکال‌زدایی"
+            },
+            "auto": {
+              "type": "string",
+              "description": "مدل حالت خودکار"
+            }
+          }
         }
       }
     },
@@ -260,7 +314,7 @@
     "package": "npm run build:webview && npm run compile -- --production",
     "check-types": "tsc --noEmit",
     "lint": "eslint src --ext ts",
-    "test": "node ./dist/test/runTest.js",
+    "test": "VITEST_SKIP_UPDATE_CHECK=true vitest run",
     "vsce:package": "vsce package",
     "vsce:package:vscode": "npx @vscode/vsce package"
   },
@@ -289,6 +343,7 @@
     "tailwindcss-rtl": "^0.9.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.12",
+    "vitest": "^4.1.11",
     "zustand": "^4.5.0"
   }
 }

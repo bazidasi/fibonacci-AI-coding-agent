@@ -7,6 +7,18 @@
   color-scheme: dark light;
   font-size: 13px;
   line-height: 1.5;
+
+  /* RGB channel variables backing Tailwind alpha modifiers
+     (bg-brand/10 etc.). Synced to the live VS Code theme at runtime by
+     App.tsx; these are static fallbacks. */
+  --fib-brand-rgb: 0 122 204;
+  --fib-status-success-rgb: 78 201 176;
+  --fib-status-warning-rgb: 204 167 0;
+  --fib-status-error-rgb: 244 135 113;
+  --fib-status-info-rgb: 55 148 255;
+  --fib-elevated-rgb: 37 37 38;
+  --fib-elevated-2-rgb: 42 45 46;
+  --fib-input-rgb: 60 60 60;
 }
 
 html,
@@ -148,7 +160,8 @@ body {
 .prose td {
   border: 1px solid var(--vscode-panel-border, #333333);
   padding: 3px 6px;
-  text-align: left;
+  /* FIX: use logical alignment so tables follow the RTL/LTR direction. */
+  text-align: start;
   font-size: 12px;
 }
 
@@ -212,10 +225,175 @@ select:focus-visible {
   background-color: rgba(0, 122, 204, 0.3);
 }
 
-/* Transition defaults */
+/* Transition defaults — FIX: transition only paint-safe properties instead of
+   `all` (which promoted layout thrash on every hover). */
 button,
 input,
 textarea,
 select {
-  transition: all 100ms ease;
+  transition:
+    background-color 100ms ease,
+    border-color 100ms ease,
+    color 100ms ease,
+    box-shadow 100ms ease;
+}
+
+/* FIX: respect the user's reduced-motion preference for all animations. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Neomorphism Style ── */
+[data-ui-style="neomorphism"] {
+  --neo-shadow: rgba(0, 0, 0, 0.15);
+  --neo-highlight: rgba(255, 255, 255, 0.05);
+}
+
+[data-ui-style="neomorphism"] body {
+  background: var(--vscode-sideBar-background, #252526);
+}
+
+[data-ui-style="neomorphism"] .section-label {
+  letter-spacing: 1px;
+}
+
+/* Neomorphism cards */
+[data-ui-style="neomorphism"] .neo-card,
+[data-ui-style="neomorphism"] section > div > div {
+  background: var(--vscode-sideBar-background, #252526);
+  border: none;
+  box-shadow:
+    6px 6px 12px var(--neo-shadow),
+    -6px -6px 12px var(--neo-highlight);
+  border-radius: 12px;
+}
+
+[data-ui-style="neomorphism"] .neo-card:hover,
+[data-ui-style="neomorphism"] section > div > div:hover {
+  box-shadow:
+    4px 4px 8px var(--neo-shadow),
+    -4px -4px 8px var(--neo-highlight);
+}
+
+/* Neomorphism buttons */
+[data-ui-style="neomorphism"] button {
+  border: none !important;
+  box-shadow:
+    3px 3px 6px var(--neo-shadow),
+    -3px -3px 6px var(--neo-highlight);
+  border-radius: 8px;
+  transition: all 150ms ease;
+}
+
+[data-ui-style="neomorphism"] button:hover {
+  box-shadow:
+    2px 2px 4px var(--neo-shadow),
+    -2px -2px 4px var(--neo-highlight);
+}
+
+[data-ui-style="neomorphism"] button:active {
+  box-shadow:
+    inset 2px 2px 4px var(--neo-shadow),
+    inset -2px -2px 4px var(--neo-highlight);
+}
+
+[data-ui-style="neomorphism"] button[class*="bg-brand"] {
+  box-shadow:
+    3px 3px 6px var(--neo-shadow),
+    -3px -3px 6px var(--neo-highlight),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Neomorphism inputs */
+[data-ui-style="neomorphism"] input,
+[data-ui-style="neomorphism"] textarea,
+[data-ui-style="neomorphism"] select {
+  background: var(--vscode-sideBar-background, #252526) !important;
+  border: none !important;
+  box-shadow:
+    inset 3px 3px 6px var(--neo-shadow),
+    inset -3px -3px 6px var(--neo-highlight);
+  border-radius: 8px;
+}
+
+[data-ui-style="neomorphism"] input:focus,
+[data-ui-style="neomorphism"] textarea:focus,
+[data-ui-style="neomorphism"] select:focus {
+  box-shadow:
+    inset 3px 3px 6px var(--neo-shadow),
+    inset -3px -3px 6px var(--neo-highlight),
+    0 0 0 2px var(--vscode-focusBorder, #007acc);
+}
+
+/* Neomorphism setting rows */
+[data-ui-style="neomorphism"] .flex.items-center.justify-between.text-xs {
+  background: var(--vscode-sideBar-background, #252526);
+  border: none;
+  box-shadow:
+    4px 4px 8px var(--neo-shadow),
+    -4px -4px 8px var(--neo-highlight);
+  border-radius: 12px;
+}
+
+/* Neomorphism toggle — FIX: exclude the sr-only peer input used by the
+   custom Toggle component; styling it made the hidden checkbox visible and
+   produced doubled toggle visuals. */
+[data-ui-style="neomorphism"] input[type="checkbox"]:not(.sr-only) {
+  appearance: none;
+  width: 36px;
+  height: 20px;
+  background: var(--vscode-sideBar-background, #252526);
+  border: none;
+  border-radius: 10px;
+  position: relative;
+  cursor: pointer;
+  box-shadow:
+    inset 3px 3px 6px var(--neo-shadow),
+    inset -3px -3px 6px var(--neo-highlight);
+}
+
+[data-ui-style="neomorphism"] input[type="checkbox"]:not(.sr-only)::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  background: var(--vscode-descriptionForeground, #858585);
+  box-shadow:
+    2px 2px 4px var(--neo-shadow),
+    -2px -2px 4px var(--neo-highlight);
+  transition: all 200ms ease;
+}
+
+[data-ui-style="neomorphism"] input[type="checkbox"]:not(.sr-only):checked {
+  background: var(--vscode-button-background, #007acc);
+}
+
+[data-ui-style="neomorphism"] input[type="checkbox"]:not(.sr-only):checked::before {
+  transform: translateX(16px);
+  background: white;
+}
+
+/* Neomorphism status dots */
+[data-ui-style="neomorphism"] .w-2.h-2.rounded-full {
+  box-shadow:
+    1px 1px 2px var(--neo-shadow),
+    -1px -1px 2px var(--neo-highlight);
+}
+
+/* Neomorphism code blocks */
+[data-ui-style="neomorphism"] pre {
+  background: var(--vscode-sideBar-background, #252526) !important;
+  border: none !important;
+  box-shadow:
+    inset 3px 3px 6px var(--neo-shadow),
+    inset -3px -3px 6px var(--neo-highlight);
 }

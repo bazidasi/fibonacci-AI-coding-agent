@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { AgentConfig, ContextCompression } from '@shared/index';
 import { postMessage as postToHost } from '../../vscodeApi';
-import { Section, SettingRow, Select, Button, TextInput } from './ui';
+import { Section, SettingRow, Toggle, Select, Button, TextInput } from './ui';
 
 export const AdvancedSection: React.FC<{
   config: AgentConfig;
@@ -38,22 +38,21 @@ export const AdvancedSection: React.FC<{
   };
 
   const downloadExport = () => {
+    // FIX (race): register the SETTINGS_EXPORT listener BEFORE posting the
+    // request — the host may reply faster than the previous 100ms delay,
+    // in which case the reply was missed and no file was downloaded.
+    const handler = (e: CustomEvent) => {
+      const blob = new Blob([e.detail.data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'fibonacci-settings.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      window.removeEventListener('SETTINGS_EXPORT', handler as EventListener);
+    };
+    window.addEventListener('SETTINGS_EXPORT', handler as EventListener);
     postToHost({ type: 'EXPORT_SETTINGS' });
-    // The export data will come back via SETTINGS_EXPORT event
-    // For now, we'll trigger a download after a brief delay
-    setTimeout(() => {
-      const handler = (e: CustomEvent) => {
-        const blob = new Blob([e.detail.data], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'fibonacci-settings.json';
-        a.click();
-        URL.revokeObjectURL(url);
-        window.removeEventListener('SETTINGS_EXPORT', handler as EventListener);
-      };
-      window.addEventListener('SETTINGS_EXPORT', handler as EventListener);
-    }, 100);
   };
 
   const handleFileImport = () => {
@@ -75,6 +74,26 @@ export const AdvancedSection: React.FC<{
 
   return (
     <div className="space-y-8">
+      {/* Agent behavior */}
+      <Section title={t('settings.behavior')}>
+        <SettingRow label={t('settings.hermesMode')} description={t('settings.hermesMode.desc')}>
+          <Toggle checked={config.hermesMode} onChange={(v) => set('hermesMode', v)} />
+        </SettingRow>
+        <SettingRow label={t('settings.parallelToolCalls')}>
+          <Toggle checked={config.parallelToolCalls} onChange={(v) => set('parallelToolCalls', v)} />
+        </SettingRow>
+        <SettingRow label={t('settings.maxIterations')}>
+          <input
+            type="number"
+            value={config.maxIterations}
+            onChange={(e) => set('maxIterations', parseInt(e.target.value))}
+            min={1}
+            max={100}
+            className="w-16 bg-panel text-text-primary rounded px-2 py-1 text-xs border border-border-input focus:border-border-focus outline-none"
+          />
+        </SettingRow>
+      </Section>
+
       {/* Context management */}
       <Section title={t('advanced.contextManagement')}>
         <SettingRow

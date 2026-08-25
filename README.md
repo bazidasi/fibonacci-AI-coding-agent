@@ -2,7 +2,23 @@
 
 An autonomous AI coding agent for the **Fibonacci AI platform** that lives in the VS Code sidebar. Built with TypeScript + React + Tailwind CSS, with full **Persian (RTL)** UI support.
 
-**Version:** 2.0.0 | **VS Code:** 1.85+ | **UI:** Persian (RTL)
+**Version:** 2.1.1 | **VS Code:** 1.85+ | **UI:** Persian (RTL)
+
+## What's Fixed in v2.1.1
+
+Security and correctness release:
+- **XSS fix** in the chat markdown renderer (attribute escaping + URL scheme allow-list) and a hardened webview CSP (`unsafe-inline` removed from `script-src`)
+- **No more pre-approval data loss**: live-coder/preview refuse to delete directories at model-emitted paths; nothing is recursively deleted before user approval
+- **Approval enforcement**: `delegate_task` subagents now route approval-requiring tools through the approval dialog, with a hard nesting-depth limit (2); dead auto-approve code removed
+- **SSRF hardening** in `web_fetch`: manual redirect re-validation, DNS-resolution checks, decimal/hex/IPv6 literal blocking, hard byte cap on downloads
+- **Shipped-broken tools fixed**: `git_*` tools now run against the workspace root; MCP servers no longer crash the extension host on spawn failure (plus Windows `.cmd` shim support); `execute_code` no longer hangs on chunk-split tool-call lines and works on stock Windows Python installs
+- Terminal commands are cancellable; `get_command_output` returns the last captured output
+- Path confinement, read/list output caps, nested `node_modules` ignore fix, Windows-safe glob matching
+- Hermes parser: quote-aware nested-object/array parsing; valid tool declarations for schema-less parameters
+- Webview: locale switch re-renders translations everywhere, missing i18n keys added, defined `rounded-card`/`rounded-button` tokens, working alpha-tinted colors, reduced-motion support, stick-to-bottom scrolling that respects the user
+- Agent loop: mode tags `[ASK/DEBUG/AUTO MODE]` recognized host-side; ~600 lines of fallback templates extracted from loop logic; context budgeting no longer O(n²)
+- System prompt: removed duplicated blocks, garbled non-Persian fragments, contradictions, and an inaccurate disk-write claim
+- New: vitest unit tests for the parser/budget/SSRF helpers (`npm test`)
 
 ## What's New in v2.0.0
 
@@ -119,7 +135,7 @@ npm run compile
 npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license
 ```
 
-This produces `fibonacci-agent-0.1.0.vsix`.
+This produces `fibonacci-agent-<version>.vsix` in the project root.
 
 ### Install the Extension
 

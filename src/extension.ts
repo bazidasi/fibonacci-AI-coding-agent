@@ -223,7 +223,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Skills (new)
   registerSkillsTools(registry, skills);
   // Memory (new — persistent cross-session declarative facts)
-  registerMemoryTools(registry);
+  registerMemoryTools(registry, context);
   // Execute code (new — run Python/JS scripts that call tools programmatically)
   registerExecuteCodeTools(registry, {
     registry,
@@ -276,6 +276,7 @@ export function activate(context: vscode.ExtensionContext): void {
     model: initialCfg.get<string>('defaultModel') ?? 'fibonacci-1-pro-max',
     hermesMode: initialCfg.get<boolean>('hermesMode') ?? true,
     language: (initialCfg.get<string>('language') as 'fa' | 'en') ?? 'fa',
+    approvals,
   });
   registerDelegateTaskTools(registry);
 
@@ -290,6 +291,7 @@ export function activate(context: vscode.ExtensionContext): void {
       model,
       hermesMode: cfg.get<boolean>('hermesMode') ?? true,
       language: (cfg.get<string>('language') as 'fa' | 'en') ?? 'fa',
+      approvals,
     });
   });
 
@@ -405,28 +407,35 @@ export function getModelChoices(): ModelChoice[] {
   const cfg = vscode.workspace.getConfiguration('fibonacci');
   const econ = cfg.get<string>('defaultModel') ?? 'fibonacci-1-pro-max';
   const pro = cfg.get<string>('professionalModel') ?? 'fibonacci-1-agentic';
+  // Cost map — replaces the previous unreadable nested ternary chains.
+  const outputCost: Record<string, number> = {
+    'fibonacci-1-pro-max': 1,
+    'fibonacci-2-coder': 2,
+    'fibonacci-2-sentiment': 1,
+    'fibonacci-1-agentic': 7,
+  };
   return [
     {
       id: econ,
-      label: 'اقتصادی (' + econ + ')',
+      label: `اقتصادی (${econ})`,
       description: 'مناسب برای کارهای روزمره و سریع',
-      outputCost: econ === 'fibonacci-1-pro-max' ? 1 : econ === 'fibonacci-2-coder' ? 2 : econ === 'fibonacci-2-sentiment' ? 1 : 7,
+      outputCost: outputCost[econ] ?? 1,
     },
     {
       id: pro,
-      label: 'حرفه‌ای (' + pro + ')',
+      label: `حرفه‌ای (${pro})`,
       description: 'مناسب برای وظایف پیچیده و چندمرحله‌ای',
-      outputCost: pro === 'fibonacci-1-pro-max' ? 1 : pro === 'fibonacci-1-agentic' ? 7 : pro === 'fibonacci-2-coder' ? 2 : pro === 'fibonacci-2-sentiment' ? 1 : 0,
+      outputCost: outputCost[pro] ?? 7,
     },
     {
       id: 'fibonacci-2-coder',
-      label: 'کد‌نویس 2.0 (' + 'fibonacci-2-coder' + ')',
+      label: 'کد‌نویس 2.0 (fibonacci-2-coder)',
       description: 'مدل متخصص برای تولید و اصلاح کد',
       outputCost: 2,
     },
     {
       id: 'fibonacci-2-sentiment',
-      label: 'آنالیزگر احساسات (' + 'fibonacci-2-sentiment' + ')',
+      label: 'آنالیزگر احساسات (fibonacci-2-sentiment)',
       description: 'مدل تخصصی برای تحلیل احساسات در متن',
       outputCost: 1,
     },
@@ -462,9 +471,7 @@ export function getCurrentConfig(): AgentConfig {
     professionalModel,
     language: (cfg.get<string>('language') as 'fa' | 'en') ?? 'fa',
     enableMCP: cfg.get<boolean>('enableMCP') ?? true,
-    autoApproveMode: (cfg.get<string>('autoApproveMode') as AutoApproveMode) ??
-      (cfg.get<boolean>('autoApprove') ? 'all' :
-       cfg.get<boolean>('autoApproveReadOnly') === false ? 'none' : 'none'),
+    autoApproveMode: (cfg.get<string>('autoApproveMode') as AutoApproveMode) ?? 'none',
     maxIterations: cfg.get<number>('maxIterations') ?? 25,
     hermesMode: cfg.get<boolean>('hermesMode') ?? true,
     showReasoning: cfg.get<boolean>('showReasoning') ?? true,
@@ -472,6 +479,7 @@ export function getCurrentConfig(): AgentConfig {
     modelAssignments,
     providers,
     themeBehavior: (cfg.get<string>('themeBehavior') as import('./types').ThemeBehavior) ?? 'auto',
+    uiStyle: (cfg.get<string>('uiStyle') as import('./types').UIStyle) ?? 'default',
     startupView: (cfg.get<string>('startupView') as import('./types').StartupView) ?? 'last-chat',
     notifyOnTaskComplete: cfg.get<boolean>('notifyOnTaskComplete') ?? true,
     toolOverrides: cfg.get<Record<string, boolean>>('toolOverrides') ?? {},

@@ -4,6 +4,15 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
+        // FIX: `font-persian` is used in index.html/webview HTML but was never
+        // defined — define it explicitly.
+        persian: [
+          'Vazirmatn',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          '"Segoe UI"',
+          'sans-serif',
+        ],
         sans: [
           'Vazirmatn',
           '-apple-system',
@@ -26,9 +35,14 @@ module.exports = {
         // Surfaces
         panel: 'var(--vscode-sideBar-background, #252526)',
         sidebar: 'var(--sideBar-background, #252526)',
-        input: 'var(--vscode-input-background, #3c3c3c)',
-        elevated: 'var(--vscode-editorWidget-background, #252526)',
-        'elevated-2': 'var(--vscode-list-inactiveSelectionBackground, #2a2d2e)',
+        // FIX (broken opacity modifiers): these colors are used with alpha
+        // modifiers (e.g. bg-brand/10). Raw var() values can't express alpha,
+        // so they are defined as RGB-channel variables with an
+        // <alpha-value> placeholder. The channel variables are kept in sync
+        // with the live VS Code theme at runtime (see App.tsx).
+        input: 'rgb(var(--fib-input-rgb, 60 60 60) / <alpha-value>)',
+        elevated: 'rgb(var(--fib-elevated-rgb, 37 37 38) / <alpha-value>)',
+        'elevated-2': 'rgb(var(--fib-elevated-2-rgb, 42 45 46) / <alpha-value>)',
         hover: 'var(--vscode-list-hoverBackground, #2a2d2e)',
         // Borders
         'border-subtle': 'var(--vscode-panel-border, #333333)',
@@ -41,22 +55,26 @@ module.exports = {
         'text-muted': 'var(--vscode-descriptionForeground, #5a5a5a)',
         // Brand
         brand: {
-          DEFAULT: 'var(--vscode-button-background, #007acc)',
+          DEFAULT: 'rgb(var(--fib-brand-rgb, 0 122 204) / <alpha-value>)',
           hover: 'var(--vscode-button-hoverBackground, #005a9e)',
           foreground: 'var(--vscode-button-foreground, #ffffff)',
         },
         // Status
         status: {
-          success: 'var(--vscode-terminal-ansiGreen, #4ec9b0)',
-          warning: 'var(--vscode-editorWarning-foreground, #cca700)',
-          error: 'var(--vscode-editorError-foreground, #f48771)',
-          info: 'var(--vscode-textLink-foreground, #3794ff)',
+          success: 'rgb(var(--fib-status-success-rgb, 78 201 176) / <alpha-value>)',
+          warning: 'rgb(var(--fib-status-warning-rgb, 204 167 0) / <alpha-value>)',
+          error: 'rgb(var(--fib-status-error-rgb, 244 135 113) / <alpha-value>)',
+          info: 'rgb(var(--fib-status-info-rgb, 55 148 255) / <alpha-value>)',
         },
       },
       borderRadius: {
         sm: '4px',
         md: '6px',
         lg: '8px',
+        // FIX: rounded-card / rounded-button were used throughout the settings
+        // UI but never defined — everything rendered square-cornered.
+        card: '10px',
+        button: '6px',
       },
       fontSize: {
         '2xs': '10px',

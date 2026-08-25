@@ -3,8 +3,7 @@ import type { ToolDefinition } from '../types';
 import { schema } from '../core/toolRegistry';
 import type { ToolRegistry } from '../core/toolRegistry';
 import { FibonacciClient } from '../api/fibonacciClient';
-import { ToolRegistry as TR } from '../core/toolRegistry';
-import { ApprovalManager } from '../core/approvalManager';
+import { ApprovalManager, describeToolCall } from '../core/approvalManager';
 import { parseToolCalls } from '../core/toolParser';
 import { buildSystemPrompt } from '../core/systemPrompt';
 import { formatToolResponseBlock } from '../core/hermesTemplate';
@@ -76,9 +75,15 @@ interface DelegateTaskDeps {
   model: string;
   hermesMode: boolean;
   language: 'fa' | 'en';
+  /** FIX (approval bypass): subagents route approval-requiring tools here. */
+  approvals?: ApprovalManager;
 }
 
 let depsRef: DelegateTaskDeps | null = null;
+
+/** FIX (runaway recursion): global depth of currently-running subagents. */
+const MAX_SUBAGENT_DEPTH = 2;
+let activeSubagentDepth = 0;
 
 export function setDelegateTaskDeps(deps: DelegateTaskDeps): void {
   depsRef = deps;
@@ -97,19 +102,34 @@ export function registerDelegateTaskTools(registry: ToolRegistry): void {
       return { ok: false, output: 'Too many tasks (max 5 per call to avoid runaway).' };
     }
 
+    // FIX (runaway recursion): enforce a hard global depth limit so
+    // orchestrator chains can't spawn subagents indefinitely.
+    if (activeSubagentDepth >= MAX_SUBAGENT_DEPTH) {
+      return {
+        ok: false,
+        output: `delegate_task refused: maximum nesting depth (${MAX_SUBAGENT_DEPTH}) reached. Complete the work directly with tools instead of spawning more subagents.`,
+      };
+    }
+
     // Run all subagents in parallel.
-    const results = await Promise.all(
-      tasks.map((task, i) =>
-        runSubagent({
-          goal: String(task.goal ?? ''),
-          role: (task.role as 'leaf' | 'orchestrator') ?? 'leaf',
-          maxIterations: Math.min(25, Math.max(3, Number(task.max_iterations ?? 15))),
-          index: i,
-          total: tasks.length,
-          parentSignal: ctx?.signal,
-        })
-      )
-    );
+    activeSubagentDepth++;
+    let results: SubagentResult[];
+    try {
+      results = await Promise.all(
+        tasks.map((task, i) =>
+          runSubagent({
+            goal: String(task.goal ?? ''),
+            role: (task.role as 'leaf' | 'orchestrator') ?? 'leaf',
+            maxIterations: Math.min(25, Math.max(3, Number(task.max_iterations ?? 15))),
+            index: i,
+            total: tasks.length,
+            parentSignal: ctx?.signal,
+          })
+        )
+      );
+    } finally {
+      activeSubagentDepth--;
+    }
 
     const summary = results
       .map(
@@ -156,28 +176,14 @@ async function runSubagent(opts: {
     return { goal: opts.goal, ok: false, answer: 'delegate_task deps not set', iterations: 0, toolCalls: 0, duration: 0 };
   }
 
-  // Each subagent gets its own tool registry + approval manager so its
-  // approvals don't pollute the parent's UI. We reuse the parent's tools
-  // but with a fresh approval manager that auto-approves everything (the
-  // subagent runs headless).
-  const subRegistry = new TR();
-  // Copy tool definitions + executors from the parent registry. We do this
-  // by re-registering each tool with the same executor. Since the registry
-  // doesn't expose executors directly, we use a small reflection trick.
-  // For v1 simplicity, we share the same registry instance (the tools are
-  // stateless anyway). The isolation we care about is the MESSAGE history,
-  // not the tool registry.
-  void subRegistry; // (kept for future isolation)
-
-  const subApprovals = new ApprovalManager(depsRef.registry, 'all');
-  subApprovals.setAutoApproveMode('all');
-  // Force-approve everything by intercepting the request handler.
-  subApprovals.setPendingHandler(() => {
-    // No-op — subagent approvals are auto-resolved below.
-  });
+  // FIX (dead code): the previously-constructed isolated registry and
+  // auto-approving ApprovalManager were never used — removed. Subagents now
+  // share the parent registry but route approval-requiring tools through the
+  // parent's real ApprovalManager so the user still sees confirmation dialogs.
 
   const abortController = new AbortController();
-  opts.parentSignal?.addEventListener('abort', () => abortController.abort());
+  const onParentAbort = () => abortController.abort();
+  opts.parentSignal?.addEventListener('abort', onParentAbort, { once: true });
 
   const currentDate = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt({
@@ -238,7 +244,27 @@ async function runSubagent(opts: {
           continue;
         }
 
-        // Auto-approve all tool calls in subagents (headless mode).
+        // FIX (approval bypass): route approval-requiring tools through the
+        // parent's real ApprovalManager so the user sees a confirmation
+        // dialog — subagents are no longer silently auto-approved.
+        const toolDef = depsRef.registry.get(call.name)?.definition;
+        if (depsRef.approvals && (toolDef?.requiresApproval ?? true)) {
+          const approval = await depsRef.approvals.requestApproval({
+            toolName: call.name,
+            args: call.args,
+            description: describeToolCall(call.name, call.args),
+          });
+          if (!approval.approved) {
+            messages.push({
+              role: 'user',
+              content: formatToolResponseBlock(call.name, {
+                error: 'The user rejected this operation. Choose a different approach or finish with what you have.',
+              }),
+            });
+            continue;
+          }
+        }
+
         const result = await depsRef.registry.execute(call.name, call.args, {
           workspaceRoot: depsRef.workspaceRoot,
           log: () => {},
@@ -278,5 +304,8 @@ async function runSubagent(opts: {
       toolCalls: totalToolCalls,
       duration: Date.now() - startTime,
     };
+  } finally {
+    // FIX (listener leak): always detach from the parent signal.
+    opts.parentSignal?.removeEventListener('abort', onParentAbort);
   }
 }

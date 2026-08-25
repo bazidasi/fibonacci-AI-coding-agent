@@ -152,8 +152,19 @@ export function registerCodeEditTools(registry: ToolRegistry): void {
 
   registry.register(codeEditToolDefinitions[1], async (args) => {
     const target = resolveWorkspacePath(String(args.path));
-    const startLine = Math.max(1, Number(args.start_line));
-    const endLine = Math.max(startLine, Number(args.end_line));
+    // FIX (NaN validation): garbage line numbers previously produced
+    // Math.max(1, NaN) → NaN and a silent "Deleted 0 line(s)" success. Reject
+    // non-numeric input explicitly.
+    const startNum = Number(args.start_line);
+    const endNum = Number(args.end_line);
+    if (!Number.isFinite(startNum) || !Number.isFinite(endNum)) {
+      return {
+        ok: false,
+        output: 'Error: start_line and end_line must be valid numbers (1-indexed).',
+      };
+    }
+    const startLine = Math.max(1, Math.floor(startNum));
+    const endLine = Math.max(startLine, Math.floor(endNum));
 
     let original: string;
     try {

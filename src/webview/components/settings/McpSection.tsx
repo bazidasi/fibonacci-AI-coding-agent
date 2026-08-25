@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { AgentConfig, McpServerConfig } from '@shared/index';
 import { postMessage as postToHost } from '../../vscodeApi';
-import { Section, TextInput, Button, EmptyState, CollapsibleSection } from './ui';
+import { Section, SettingRow, Toggle, TextInput, Button, EmptyState, CollapsibleSection } from './ui';
 
 export const McpSection: React.FC<{
   config: AgentConfig;
@@ -51,6 +51,9 @@ export const McpSection: React.FC<{
     <div className="space-y-6">
       {/* MCP integration toggle */}
       <Section title={t('mcp.title')}>
+        <SettingRow label={t('settings.enableMCP')}>
+          <Toggle checked={config.enableMCP} onChange={(v) => postToHost({ type: 'SET_CONFIG', key: 'enableMCP', value: v })} />
+        </SettingRow>
         {!config.enableMCP && (
           <div className="text-xs text-status-warning bg-status-warning/10 rounded-card p-2.5 border border-status-warning/20">
             {t('mcp.disabled')}

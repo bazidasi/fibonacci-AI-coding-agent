@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import type { ToolDefinition } from '../types';
 import { schema } from '../core/toolRegistry';
 import type { ToolRegistry } from '../core/toolRegistry';
@@ -139,10 +139,15 @@ export function registerExecuteCodeTools(
 
       // Build the script wrapper that sets up the IPC bridge.
       const isPython = language !== 'node';
+      // FIX (indentation corruption): the user's script is written VERBATIM
+      // to its own file; the generated wrapper loads and executes it without
+      // re-indenting, so multi-line strings/heredocs survive intact.
+      const userFile = isPython ? 'user_script.py' : 'user_script.js';
+      fs.writeFileSync(path.join(tmpDir, userFile), script, 'utf-8');
       const scriptFile = isPython ? 'script.py' : 'script.js';
       const fullScript = isPython
-        ? buildPythonWrapper(script)
-        : buildNodeWrapper(script);
+        ? buildPythonWrapper(userFile)
+        : buildNodeWrapper(userFile);
       fs.writeFileSync(path.join(tmpDir, scriptFile), fullScript, 'utf-8');
 
       // Run the script with a stdin/stdout JSON-RPC bridge.
@@ -208,50 +213,73 @@ async function runScriptWithBridge(opts: {
 }): Promise<BridgeResult> {
   return new Promise((resolve) => {
     const startTime = Date.now();
-    const cmd = opts.language === 'node' ? 'node' : 'python3';
-    const args = [opts.scriptPath];
+    const { cmd, cmdArgs } =
+      opts.language === 'node'
+        ? { cmd: 'node', cmdArgs: [opts.scriptPath] }
+        : resolvePythonCommand(opts.scriptPath);
 
-    const child = execFile(cmd, args, {
+    const child = execFile(cmd, cmdArgs, {
       cwd: opts.cwd,
       maxBuffer: 20 * 1024 * 1024,
       timeout: opts.timeout,
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
 
+    // Cap raw accumulated output so chatty scripts can't exhaust ext-host memory.
+    const MAX_RAW_OUTPUT = 200_000;
     let stdout = '';
     let stderr = '';
 
-    // We need bidirectional IPC. execFile doesn't easily expose stdin writes
-    // in a promisified way, so we use spawn for finer control.
     child.stdin?.setDefaultEncoding('utf-8');
 
+    // FIX (chunk-boundary bug): stdout arrives in arbitrary-size chunks — a
+    // __TOOL_CALL__ line split across two chunks previously broke parsing and
+    // hung the script until the timeout. Buffer incomplete lines and only
+    // process complete ones.
+    let lineBuf = '';
     child.stdout?.on('data', (chunk: Buffer | string) => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
-      // Process line by line. Lines starting with `__TOOL_CALL__:` are tool
-      // call requests; everything else is regular stdout.
-      const lines = text.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('__TOOL_CALL__:')) {
-          // Parse the JSON request
-          const jsonStr = line.slice('__TOOL_CALL__:'.length).trim();
-          try {
-            const req = JSON.parse(jsonStr) as { id: number; name: string; args: Record<string, unknown> };
-            // Execute the tool asynchronously
-            handleToolCall(req).catch((err) => {
-              console.error('[fibonacci-agent] Unhandled tool call error in execute_code:', err);
-            });
-          } catch (err) {
-            // Malformed — log to stderr
-            child.stdin?.write(JSON.stringify({ error: `malformed tool call: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
-          }
-        } else if (line.length > 0) {
-          stdout += line + '\n';
-        }
+      lineBuf += text;
+      let idx: number;
+      while ((idx = lineBuf.indexOf('\n')) >= 0) {
+        const line = lineBuf.slice(0, idx);
+        lineBuf = lineBuf.slice(idx + 1);
+        processLine(line);
       }
     });
 
+    const flushLineBuf = () => {
+      if (lineBuf.length > 0) {
+        processLine(lineBuf);
+        lineBuf = '';
+      }
+    };
+
+    function processLine(line: string): void {
+      if (line.startsWith('__TOOL_CALL__:')) {
+        const jsonStr = line.slice('__TOOL_CALL__:'.length).trim();
+        try {
+          const req = JSON.parse(jsonStr) as { id: number; name: string; args: Record<string, unknown> };
+          handleToolCall(req).catch((err) => {
+            console.error('[fibonacci-agent] Unhandled tool call error in execute_code:', err);
+            child.stdin?.write(
+              JSON.stringify({ id: req.id, error: err instanceof Error ? err.message : String(err) }) + '\n'
+            );
+          });
+        } catch (err) {
+          // Malformed request — we can't know the id, so record it for the
+          // summary instead of writing an unmatched response.
+          stderr += `[fibonacci-agent] malformed tool call ignored: ${err instanceof Error ? err.message : String(err)}\n`;
+        }
+      } else if (line.length > 0) {
+        stdout += line + '\n';
+        if (stdout.length > MAX_RAW_OUTPUT) stdout = stdout.slice(-MAX_RAW_OUTPUT);
+      }
+    }
+
     child.stderr?.on('data', (chunk: Buffer | string) => {
       stderr += typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+      if (stderr.length > MAX_RAW_OUTPUT) stderr = stderr.slice(-MAX_RAW_OUTPUT);
     });
 
     async function handleToolCall(req: { id: number; name: string; args: Record<string, unknown> }): Promise<void> {
@@ -286,6 +314,7 @@ async function runScriptWithBridge(opts: {
     child.on('close', (code) => {
       clearTimeout(timer);
       opts.signal?.removeEventListener('abort', cleanup);
+      flushLineBuf();
       resolve({
         exitCode: code ?? 1,
         stdout: stdout.trim(),
@@ -399,33 +428,83 @@ ${toolNames.map((n) => {
 `;
 }
 
-function buildPythonWrapper(userScript: string): string {
-  return `import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tools import *
-import asyncio
-
-async def _main():
-${userScript
-    .split('\n')
-    .map((line) => '    ' + line)
-    .join('\n')}
-
-asyncio.run(_main())
-`;
+function buildPythonWrapper(userFileName: string): string {
+  // The user's code is parsed with ast and its top-level statements are
+  // wrapped into an async function — this preserves multi-line strings and
+  // still allows top-level `await tools.*` in the user's script.
+  return [
+    'import sys, os, ast, asyncio',
+    'sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))',
+    'from tools import *',
+    '',
+    '_here = os.path.dirname(os.path.abspath(__file__))',
+    'with open(os.path.join(_here, ' + JSON.stringify(userFileName) + '), "r", encoding="utf-8") as _f:',
+    '    _user_src = _f.read()',
+    '',
+    '_tree = ast.parse(_user_src, mode="exec")',
+    '_fn = ast.AsyncFunctionDef(',
+    '    name="_user_main",',
+    '    args=ast.arguments(posonlyargs=[], args=[], vararg=None, kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[]),',
+    '    body=_tree.body, decorator_list=[], returns=None, type_comment=None,',
+    ')',
+    'ast.fix_missing_locations(_fn)',
+    '# Seed the execution namespace with this module\'s globals so the',
+    '# user script can see `tools`, star-imported helpers, asyncio, etc.',
+    '_ns = dict(globals())',
+    'exec(compile(ast.Module(body=[_fn], type_ignores=[]), "<user_script>", "exec"), _ns)',
+    '',
+    'asyncio.run(_ns["_user_main"]())',
+    '',
+  ].join('\n');
 }
 
-function buildNodeWrapper(userScript: string): string {
+function buildNodeWrapper(userFileName: string): string {
+  // Execute the verbatim user file inside an AsyncFunction so top-level
+  // `await tools.*` works without re-indenting the source.
   return `const tools = require('./tools');
+const fs = require('fs');
 const path = require('path');
 
 async function main() {
-${userScript
-    .split('\n')
-    .map((line) => '  ' + line)
-    .join('\n')}
+  const src = fs.readFileSync(path.join(__dirname, ${JSON.stringify(userFileName)}), 'utf-8');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const fn = new AsyncFunction('tools', src);
+  await fn(tools);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
 `;
+}
+
+// Windows installers provide python.exe / py.exe but rarely python3.exe (and
+// the Microsoft Store alias stub often intercepts it). Probe once and cache.
+let cachedPython: { cmd: string; prefixArgs: string[] } | null | undefined;
+function resolvePythonCommand(scriptPath: string): { cmd: string; cmdArgs: string[] } {
+  if (cachedPython === undefined) {
+    cachedPython = probePython();
+  }
+  if (!cachedPython) {
+    return { cmd: 'python3', cmdArgs: [scriptPath] };
+  }
+  return { cmd: cachedPython.cmd, cmdArgs: [...cachedPython.prefixArgs, scriptPath] };
+}
+
+function probePython(): { cmd: string; prefixArgs: string[] } | null {
+  const candidates: Array<{ cmd: string; prefixArgs: string[] }> = [
+    { cmd: 'python3', prefixArgs: [] },
+    { cmd: 'python', prefixArgs: [] },
+    { cmd: 'py', prefixArgs: ['-3'] },
+  ];
+  for (const cand of candidates) {
+    try {
+      const out = execFileSync(cand.cmd, [...cand.prefixArgs, '--version'], {
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      } as import('node:child_process').ExecFileSyncOptionsWithStringEncoding).toString();
+      if (/python\s*(2\.|3\.)/i.test(out)) return cand;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
 }

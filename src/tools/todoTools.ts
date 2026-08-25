@@ -51,7 +51,23 @@ export function registerTodoTool(
   onTodosUpdate: (todos: TodoItem[]) => void
 ): void {
   registry.register(todoToolDefinition, async (args) => {
-    const todos = (args.todos as TodoItem[]) ?? [];
+    const raw = (args.todos as Array<Record<string, unknown>>) ?? [];
+    // FIX: validate/normalize items so garbage from the model doesn't reach
+    // the webview renderer.
+    const VALID_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+    const todos: TodoItem[] = raw
+      .filter((t) => t && typeof t.content === 'string' && t.content.trim().length > 0)
+      .slice(0, 100)
+      .map((t) => ({
+        content: String(t.content).slice(0, 500),
+        status: VALID_STATUSES.has(String(t.status)) ? (t.status as TodoItem['status']) : 'pending',
+        activeForm:
+          typeof t.activeForm === 'string' && t.activeForm.trim()
+            ? String(t.activeForm).slice(0, 500)
+            : undefined,
+        ...(typeof t.id === 'string' ? { id: t.id } : {}),
+      } as TodoItem))
+      .map((t, idx) => ({ ...t, id: (t as { id?: string }).id ?? `todo-${idx}` }));
     onTodosUpdate(todos);
     return {
       ok: true,

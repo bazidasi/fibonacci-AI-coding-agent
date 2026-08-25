@@ -379,7 +379,8 @@ export function registerEditorTools(registry: ToolRegistry): void {
   // open_file
   registry.register(editorToolDefinitions[5], async (args) => {
     const filePath = resolveWorkspacePath(String(args.path));
-    const preview = args.preview !== false;
+    // FIX: default now matches the documented "preview (default: false)".
+    const preview = args.preview === true;
     try {
       const doc = await openDocument(filePath);
       await vscode.window.showTextDocument(doc, {

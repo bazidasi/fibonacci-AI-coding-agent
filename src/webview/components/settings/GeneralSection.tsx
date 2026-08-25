@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { AgentConfig, ThemeBehavior, StartupView } from '@shared/index';
 import { postMessage as postToHost } from '../../vscodeApi';
 import { Section, SettingRow, Toggle, Select, MaskedInput, Button, TextInput } from './ui';
@@ -9,13 +9,21 @@ export const GeneralSection: React.FC<{
 }> = ({ config, t }) => {
   const [draftApiKey, setDraftApiKey] = useState('');
   const [showSaved, setShowSaved] = useState(false);
+  // FIX: track the timeout so it can be cleared on unmount.
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+    };
+  }, []);
 
   const saveApiKey = () => {
     if (!draftApiKey.trim()) return;
     postToHost({ type: 'SAVE_API_KEY', apiKey: draftApiKey.trim() });
     setDraftApiKey('');
     setShowSaved(true);
-    setTimeout(() => setShowSaved(false), 2000);
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setShowSaved(false), 2000);
   };
 
   const set = (key: string, value: unknown) => {
@@ -77,31 +85,25 @@ export const GeneralSection: React.FC<{
             ]}
           />
         </SettingRow>
+        <SettingRow
+          label={t('settings.uiStyle') || 'UI Style'}
+          description={t('settings.uiStyle.desc') || 'Choose between default and neomorphism design'}
+        >
+          <Select
+            value={config.uiStyle ?? 'default'}
+            onChange={(v) => set('uiStyle', v)}
+            options={[
+              { value: 'default', label: t('settings.uiStyle.default') || 'Default' },
+              { value: 'neomorphism', label: t('settings.uiStyle.neomorphism') || 'Neomorphism' },
+            ]}
+          />
+        </SettingRow>
       </Section>
 
       {/* Behavior */}
       <Section title={t('settings.behavior')}>
-        <SettingRow label={t('settings.enableMCP')}>
-          <Toggle checked={config.enableMCP} onChange={(v) => set('enableMCP', v)} />
-        </SettingRow>
-        <SettingRow label={t('settings.hermesMode')} description={t('settings.hermesMode.desc')}>
-          <Toggle checked={config.hermesMode} onChange={(v) => set('hermesMode', v)} />
-        </SettingRow>
         <SettingRow label={t('settings.showReasoning')}>
           <Toggle checked={config.showReasoning} onChange={(v) => set('showReasoning', v)} />
-        </SettingRow>
-        <SettingRow label={t('settings.parallelToolCalls')}>
-          <Toggle checked={config.parallelToolCalls} onChange={(v) => set('parallelToolCalls', v)} />
-        </SettingRow>
-        <SettingRow label={t('settings.maxIterations')}>
-          <input
-            type="number"
-            value={config.maxIterations}
-            onChange={(e) => set('maxIterations', parseInt(e.target.value))}
-            min={1}
-            max={100}
-            className="w-16 bg-panel text-text-primary rounded px-2 py-1 text-xs border border-border-input focus:border-border-focus outline-none"
-          />
         </SettingRow>
       </Section>
 

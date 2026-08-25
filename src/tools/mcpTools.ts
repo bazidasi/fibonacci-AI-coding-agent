@@ -25,6 +25,22 @@ interface McpSession {
   tools: DiscoveredMcpTool[];
   initialized: boolean;
   buffer: string;
+  /** Last stderr tail — kept for error reporting instead of being fully swallowed. */
+  stderrTail: string;
+}
+
+/** Reject every pending RPC on a session (server crashed / was killed). */
+function rejectAllPending(session: McpSession, reason: string): void {
+  for (const [, entry] of session.pending) {
+    entry.reject(new Error(reason));
+  }
+  session.pending.clear();
+}
+
+/** Quote a command + args into a single cmd.exe-safe string for shell:true spawns. */
+function quoteWindowsCommand(command: string, args: string[]): string {
+  const q = (s: string) => (/\s/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  return [command, ...args].map(q).join(' ');
 }
 
 export class McpManager {
@@ -50,10 +66,21 @@ export class McpManager {
       await this.disconnect(config.name);
     }
     const { spawn } = await import('node:child_process');
-    const child = spawn(config.command, config.args ?? [], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...(config.env ?? {}) },
-    });
+    // On Windows, many MCP servers are launched via .cmd shims (npx, uvx, …).
+    // Node ≥ 18.20 throws EINVAL when spawning .cmd/.bat without a shell,
+    // so use shell:true there. Args are joined and quoted for cmd.exe.
+    const useShell = process.platform === 'win32';
+    const child = useShell
+      ? spawn(quoteWindowsCommand(config.command, config.args ?? []), {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env, ...(config.env ?? {}) },
+          shell: true,
+          windowsVerbatimArguments: false,
+        })
+      : spawn(config.command, config.args ?? [], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env, ...(config.env ?? {}) },
+        });
 
     const session: McpSession = {
       config,
@@ -63,7 +90,19 @@ export class McpManager {
       tools: [],
       initialized: false,
       buffer: '',
+      stderrTail: '',
     };
+
+    // CRITICAL FIX: handle spawn errors (bad command / ENOENT). Without this
+    // listener, an invalid command crashes the entire extension host with an
+    // unhandled 'error' event.
+    child.on('error', (err) => {
+      rejectAllPending(session, `MCP server "${config.name}" failed to start: ${err.message}`);
+      if (this.sessions.get(config.name) === session) {
+        this.sessions.delete(config.name);
+        this.emit();
+      }
+    });
 
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (chunk: string) => {
@@ -82,13 +121,24 @@ export class McpManager {
       }
     });
 
-    child.stderr?.on('data', () => {
-      /* swallow stderr — MCP servers can be chatty */
+    child.stderr?.setEncoding('utf-8');
+    child.stderr?.on('data', (chunk: string) => {
+      // Keep only the last 4 KB of stderr for diagnostics.
+      session.stderrTail = (session.stderrTail + chunk).slice(-4096);
     });
 
-    child.on('exit', () => {
-      this.sessions.delete(config.name);
-      this.emit();
+    child.on('exit', (code) => {
+      // CRITICAL FIX: reject pending RPCs so callers don't hang until their
+      // own 30s timers fire when a server dies mid-call.
+      rejectAllPending(
+        session,
+        `MCP server "${config.name}" exited (code ${code ?? 'signal'}).` +
+          (session.stderrTail ? ` stderr: ${session.stderrTail.trim().slice(-500)}` : '')
+      );
+      if (this.sessions.get(config.name) === session) {
+        this.sessions.delete(config.name);
+        this.emit();
+      }
     });
 
     this.sessions.set(config.name, session);
@@ -126,6 +176,7 @@ export class McpManager {
     } catch {
       /* ignore */
     }
+    rejectAllPending(session, `MCP server "${name}" was disconnected.`);
     this.sessions.delete(name);
     this.emit();
   }

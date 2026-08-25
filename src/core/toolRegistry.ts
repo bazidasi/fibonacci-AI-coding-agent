@@ -1,5 +1,6 @@
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { ToolCategory, ToolDefinition } from '../types';
+import { registerKnownTool } from './toolParser';
 
 /**
  * Central registry of all agent tools. Each tool has:
@@ -36,6 +37,9 @@ export class ToolRegistry {
 
   register(def: ToolDefinition, executor: ToolExecutor): void {
     this.tools.set(def.name, { definition: def, executor });
+    // Keep the XML tool-call parser in sync — the registry is the single
+    // source of truth for tool names.
+    registerKnownTool(def.name);
   }
 
   unregister(name: string): void {

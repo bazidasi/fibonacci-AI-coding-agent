@@ -210,12 +210,13 @@ async function openFileForLiveCoding(
 ): Promise<{ editor: vscode.TextEditor; existed: boolean; originalContent: string; absPath: string } | null> {
   const absPath = resolveFilePath(filePath, workspaceRoot);
 
-  // CRITICAL: Check if a DIRECTORY exists at this path (can happen if a
-  // previous run created a partial-path directory). If so, remove it.
+  // CRITICAL FIX (pre-approval data loss): never delete an existing directory
+  // at the target path — fail instead so nothing is destroyed pre-approval.
   try {
     const stat = fs.statSync(absPath);
     if (stat.isDirectory()) {
-      fs.rmSync(absPath, { recursive: true, force: true });
+      console.error(`[live-coder] Refusing to stream into "${absPath}" — it is an existing directory.`);
+      return null;
     }
   } catch {
     // Path doesn't exist — fine.
@@ -876,17 +877,21 @@ export class LiveCodeStreamer {
   async cleanupEmptyFile(): Promise<void> {
     if (!this.state) return;
 
-    const { absPath, existed, streamedContent } = this.state;
+    const { absPath, existed, streamedContent, editor } = this.state;
 
     // Only clean up if:
     // 1. The file didn't exist before (we created it)
     // 2. No content was streamed (it's empty)
     if (!existed && streamedContent.length === 0) {
-      // Close the editor
-      try {
-        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-      } catch {
-        /* ignore */
+      // FIX (wrong-editor close): only close when OUR editor is the active
+      // one — the previous code closed whatever the user had focused.
+      const activeUri = vscode.window.activeTextEditor?.document.uri;
+      if (activeUri?.toString() === editor.document.uri.toString()) {
+        try {
+          await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        } catch {
+          /* ignore */
+        }
       }
       // CRITICAL FIX (bug C): Wait briefly for VS Code to release the file
       // handle, then delete with retry logic for EBUSY/EPERM on Windows.
@@ -909,13 +914,16 @@ export class LiveCodeStreamer {
   async cleanup(): Promise<void> {
     if (this.state && !this.state.existed) {
       // File was newly created — revert by closing and deleting.
-      try {
-        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-        // CRITICAL FIX (bug C): Wait + retry for EBUSY on Windows.
-        await new Promise<void>((resolve) => setTimeout(resolve, 50));
-        await unlinkWithRetry(this.state.editor.document.uri.fsPath);
-      } catch {
-        /* ignore */
+      const activeUri = vscode.window.activeTextEditor?.document.uri;
+      if (activeUri?.toString() === this.state.editor.document.uri.toString()) {
+        try {
+          await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+          // CRITICAL FIX (bug C): Wait + retry for EBUSY on Windows.
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+          await unlinkWithRetry(this.state.editor.document.uri.fsPath);
+        } catch {
+          /* ignore */
+        }
       }
     }
     this.state = null;

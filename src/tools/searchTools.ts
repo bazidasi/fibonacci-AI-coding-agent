@@ -85,7 +85,9 @@ function isIgnored(filePath: string, workspaceRoot: string): boolean {
   try {
     const rel = path.relative(workspaceRoot, filePath);
     if (!rel || rel.startsWith('..')) return false;
-    if (IGNORED_SEGMENTS.some((seg) => rel === seg || rel.startsWith(seg + path.sep))) {
+    // FIX (nested-ignore bug): match ANY path segment, not just top-level.
+    const parts = rel.split(path.sep);
+    if (parts.some((seg) => IGNORED_SEGMENTS.includes(seg))) {
       return true;
     }
     const ext = path.extname(filePath).toLowerCase();
@@ -361,15 +363,21 @@ export function registerSearchTools(registry: ToolRegistry): void {
  * Convert a glob pattern to a RegExp.
  * Supports: * (matches anything except /), ** (matches everything including /),
  * ? (matches one char except /), and literal characters.
+ *
+ * FIX (Windows): the subject path is normalized to forward slashes before
+ * matching, and backslashes in the glob input are treated as separators too —
+ * previously "src/*.py" compiled to ^src/[^/]*\.py$ which never matched the
+ * backslash paths produced by path.relative() on Windows.
  */
 function compileGlob(glob: string): (s: string) => boolean {
+  const normalizedGlob = glob.replace(/\\/g, '/');
   let re = '^';
   let i = 0;
-  while (i < glob.length) {
-    const c = glob[i];
-    if (c === '*' && glob[i + 1] === '*') {
+  while (i < normalizedGlob.length) {
+    const c = normalizedGlob[i];
+    if (c === '*' && normalizedGlob[i + 1] === '*') {
       i += 2;
-      if (glob[i] === '/') i++;
+      if (normalizedGlob[i] === '/') i++;
       re += '.*';
     } else if (c === '*') {
       re += '[^/]*';
@@ -390,5 +398,5 @@ function compileGlob(glob: string): (s: string) => boolean {
   }
   re += '$';
   const regex = new RegExp(re);
-  return (s: string) => regex.test(s);
+  return (s: string) => regex.test(s.replace(/\\/g, '/'));
 }

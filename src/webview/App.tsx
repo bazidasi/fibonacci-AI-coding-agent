@@ -112,6 +112,45 @@ export const App: React.FC = () => {
     document.body.setAttribute('data-theme', theme);
   }, [theme]);
 
+  const config = useStore((s) => s.config);
+
+  useEffect(() => {
+    const uiStyle = config?.uiStyle ?? 'default';
+    document.documentElement.setAttribute('data-ui-style', uiStyle);
+    document.body.setAttribute('data-ui-style', uiStyle);
+  }, [config?.uiStyle]);
+
+  // FIX (broken opacity modifiers): sync the RGB-channel CSS variables that
+  // back Tailwind's alpha modifiers (bg-brand/10, border-status-error/20…)
+  // from the live VS Code theme colors.
+  useEffect(() => {
+    const syncColorChannels = () => {
+      const channels: Record<string, string> = {
+        '--fib-brand-rgb': 'var(--vscode-button-background, #007acc)',
+        '--fib-status-success-rgb': 'var(--vscode-terminal-ansiGreen, #4ec9b0)',
+        '--fib-status-warning-rgb': 'var(--vscode-editorWarning-foreground, #cca700)',
+        '--fib-status-error-rgb': 'var(--vscode-editorError-foreground, #f48771)',
+        '--fib-status-info-rgb': 'var(--vscode-textLink-foreground, #3794ff)',
+        '--fib-elevated-rgb': 'var(--vscode-editorWidget-background, #252526)',
+        '--fib-elevated-2-rgb': 'var(--vscode-list-inactiveSelectionBackground, #2a2d2e)',
+        '--fib-input-rgb': 'var(--vscode-input-background, #3c3c3c)',
+      };
+      for (const [channelVar, sourceVar] of Object.entries(channels)) {
+        // Resolve the var() reference to an actual color value.
+        const probe = document.createElement('span');
+        probe.style.color = sourceVar;
+        document.body.appendChild(probe);
+        const rgb = getComputedStyle(probe).color;
+        probe.remove();
+        const m = rgb.match(/(\d+),\s*(\d+),\s*(\d+)/);
+        if (m) {
+          document.documentElement.style.setProperty(channelVar, `${m[1]} ${m[2]} ${m[3]}`);
+        }
+      }
+    };
+    syncColorChannels();
+  }, [theme]);
+
   const handleHistoryClick = () => {
     setShowHistory(true);
   };

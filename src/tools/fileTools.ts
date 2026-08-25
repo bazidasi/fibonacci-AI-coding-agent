@@ -86,6 +86,10 @@ async function isIgnored(filePath: string, workspaceRoot: string): Promise<boole
     const rel = path.relative(workspaceRoot, filePath);
     if (!rel || rel.startsWith('..')) return false;
     // Comprehensive ignore list — these directories/files are never searched.
+    // FIX (nested-ignore bug): match ANY path segment, not just the top
+    // level — previously "packages/app/node_modules" was traversed because
+    // the relative path doesn't START with "node_modules".
+    const parts = rel.split(path.sep);
     const ignoredSegments = [
       'node_modules',
       '.git',
@@ -109,7 +113,7 @@ async function isIgnored(filePath: string, workspaceRoot: string): Promise<boole
       '.venv',
       'env',
     ];
-    if (ignoredSegments.some((seg) => rel === seg || rel.startsWith(seg + path.sep))) {
+    if (parts.some((seg) => ignoredSegments.includes(seg))) {
       return true;
     }
     // Skip binary/media file extensions
@@ -258,6 +262,9 @@ export function createFileToolExecutors(_workspaceRoot: string) {
   return {
     read_file: async (args: Record<string, unknown>) => {
       const target = resolveWorkspacePath(String(args.path), getCurrentWorkspaceRoot());
+      // FIX (unbounded output): cap full-file reads so a huge file can't blow
+      // up the model context. Line-range reads are naturally bounded.
+      const MAX_READ_CHARS = 100_000;
       let content = await fs.readFile(target, 'utf-8');
       const startLine = args.start_line ? Number(args.start_line) : undefined;
       const endLine = args.end_line ? Number(args.end_line) : undefined;
@@ -266,7 +273,15 @@ export function createFileToolExecutors(_workspaceRoot: string) {
         const start = (startLine ?? 1) - 1;
         const end = endLine ?? lines.length;
         content = lines.slice(start, end).join('\n');
-        return { ok: true, output: content, meta: { lines: end - start } };
+        return { ok: true, output: content.slice(0, MAX_READ_CHARS), meta: { lines: end - start } };
+      }
+      if (content.length > MAX_READ_CHARS) {
+        return {
+          ok: true,
+          output: content.slice(0, MAX_READ_CHARS) +
+            `\n\n[...truncated at ${MAX_READ_CHARS} of ${content.length} characters — use start_line/end_line to read specific sections...]`,
+          meta: { truncated: true, totalLength: content.length },
+        };
       }
       return { ok: true, output: content };
     },
@@ -351,18 +366,30 @@ export function createFileToolExecutors(_workspaceRoot: string) {
       );
       const recursive = args.recursive !== false;
       const entries: string[] = [];
+      let truncated = false;
       if (recursive) {
         for await (const f of walk(target, wsRoot)) {
           entries.push(path.relative(wsRoot, f) || f);
-          if (entries.length >= 500) break;
+          if (entries.length >= 500) {
+            truncated = true;
+            break;
+          }
         }
       } else {
+        // FIX: apply the same ignore filtering to the non-recursive branch.
         const items = await fs.readdir(target, { withFileTypes: true });
         for (const it of items) {
+          const full = path.join(target, it.name);
+          if (await isIgnored(full, wsRoot)) continue;
           entries.push(it.isDirectory() ? `${it.name}/` : it.name);
+          if (entries.length >= 500) {
+            truncated = true;
+            break;
+          }
         }
       }
-      return { ok: true, output: entries.join('\n') || '(empty directory)' };
+      const notice = truncated ? `\n[list truncated at ${entries.length} entries]` : '';
+      return { ok: true, output: (entries.join('\n') || '(empty directory)') + notice };
     },
 
     search_files: async (args: Record<string, unknown>, ctx?: ToolContext) => {

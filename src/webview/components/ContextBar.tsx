@@ -1,14 +1,17 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 
 export const ContextBar: React.FC = () => {
-  const t = useStore((s) => s.t);
   const config = useStore((s) => s.config);
   const currentModel = useStore((s) => s.currentModel);
   const messages = useStore((s) => s.messages);
 
-  const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
-  const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+  // FIX (perf): memoize the token estimate so it isn't recomputed over all
+  // message content on every streamed-token re-render.
+  const totalTokens = useMemo(
+    () => messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0),
+    [messages]
+  );
   const contextLimit = config?.contextLimit || getContextLimit(currentModel);
   const usagePercent = contextLimit > 0 ? Math.min(100, (totalTokens / contextLimit) * 100) : 0;
 

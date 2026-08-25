@@ -1,45 +1,54 @@
 import React from 'react';
 
 /**
- * Enhanced markdown renderer — supports headings (H1-H6), lists, code blocks 
+ * Enhanced markdown renderer — supports headings (H1-H6), lists, code blocks
  * with syntax highlighting, tables, bold/italic, inline code, links.
  * Code blocks render LTR even inside an RTL chat.
  */
-export const Markdown: React.FC<{ content: string }> = ({ content }) => {
-  const blocks = parseBlocks(content);
+export const Markdown: React.FC<{ content: string }> = React.memo(({ content }) => {
+  let blocks: Block[];
+  try {
+    blocks = parseBlocks(content);
+  } catch {
+    return <div className="prose text-text whitespace-pre-wrap">{content}</div>;
+  }
   return (
     <div className="prose text-text">
       {blocks.map((b, i) => {
-        switch (b.type) {
-          case 'code':
-            return (
-              <pre key={i} className={`language-${b.lang || ''}`}>
-                <code className={`language-${b.lang || ''}`}>{b.content}</code>
-              </pre>
-            );
-          case 'heading':
-            return (
-              <React.Fragment key={i}>
-                {renderHeading(b.level, b.content)}
-              </React.Fragment>
-            );
-          case 'table':
-            return <Table key={i} header={b.header} rows={b.rows} />;
-          case 'list':
-            return <List key={i} items={b.items} ordered={b.ordered} />;
-          case 'para':
-            return <p key={i} dangerouslySetInnerHTML={{ __html: renderInline(b.content) }} />;
-          case 'hr':
-            return <hr key={i} className="my-4 border-border-subtle" />;
-          case 'blockquote':
-            return <blockquote key={i} className="border-r-2 border-brand pr-3 my-2 text-text-secondary italic" dangerouslySetInnerHTML={{ __html: renderInline(b.content) }} />;
-          default:
-            return null;
+        try {
+          switch (b.type) {
+            case 'code':
+              return (
+                <pre key={i} className={`language-${b.lang || ''}`}>
+                  <code className={`language-${b.lang || ''}`}>{b.content}</code>
+                </pre>
+              );
+            case 'heading':
+              return (
+                <React.Fragment key={i}>
+                  {renderHeading(b.level, b.content)}
+                </React.Fragment>
+              );
+            case 'table':
+              return <Table key={i} header={b.header} rows={b.rows} />;
+            case 'list':
+              return <List key={i} items={b.items} ordered={b.ordered} />;
+            case 'para':
+              return <p key={i} dangerouslySetInnerHTML={{ __html: renderInline(b.content) }} />;
+            case 'hr':
+              return <hr key={i} className="my-4 border-border-subtle" />;
+            case 'blockquote':
+              return <blockquote key={i} className="border-r-2 border-brand pr-3 my-2 text-text-secondary italic" dangerouslySetInnerHTML={{ __html: renderInline(b.content) }} />;
+            default:
+              return null;
+          }
+        } catch {
+          return <div key={i} className="text-status-error text-xs">[render error]</div>;
         }
       })}
     </div>
   );
-};
+});
 
 type Block =
   | { type: 'code'; lang?: string; content: string }
@@ -58,13 +67,14 @@ function parseBlocks(input: string): Block[] {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Code fence
-    const fence = line.match(/^```(\w+)?/);
+    // Code fence — FIX: allow more language tokens (c++, c#, objective-c…)
+    // and tolerate trailing whitespace on the closing fence.
+    const fence = line.match(/^```([\w+#.-]+)?/);
     if (fence) {
       const lang = fence[1];
       const buf: string[] = [];
       i++;
-      while (i < lines.length && !lines[i].startsWith('```')) {
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
         buf.push(lines[i]);
         i++;
       }
@@ -187,7 +197,7 @@ const Table: React.FC<{ header: string[]; rows: string[][] }> = ({ header, rows 
       <thead>
         <tr>
           {header.map((h, i) => (
-            <th key={i} className="border border-border-subtle px-2 py-1 text-xs font-semibold text-text-primary bg-input text-left">
+            <th key={i} className="border border-border-subtle px-2 py-1 text-xs font-semibold text-text-primary bg-input text-start">
               {renderInline(h)}
             </th>
           ))}
@@ -197,7 +207,7 @@ const Table: React.FC<{ header: string[]; rows: string[][] }> = ({ header, rows 
         {rows.map((row, ri) => (
           <tr key={ri} className={ri % 2 === 0 ? 'bg-input/30' : ''}>
             {row.map((cell, ci) => (
-              <td key={ci} className="border border-border-subtle px-2 py-1 text-xs text-text-secondary text-left">
+              <td key={ci} className="border border-border-subtle px-2 py-1 text-xs text-text-secondary text-start">
                 {renderInline(cell)}
               </td>
             ))}
@@ -229,23 +239,45 @@ function renderHeading(level: number, content: string): React.ReactElement {
   return React.createElement(Tag, { className: classNames[level as keyof typeof classNames], dangerouslySetInnerHTML: { __html: renderInline(content) } });
 }
 
+/** Only http/https (and relative) URLs are allowed in links/images. */
+function safeUrl(url: string): string | null {
+  const trimmed = url.trim();
+  if (/^(https?:)?\/\//i.test(trimmed)) return trimmed;
+  if (/^\//.test(trimmed) || /^\.#/.test(trimmed) || /^[.#]/.test(trimmed)) return trimmed;
+  if (/^#/.test(trimmed)) return trimmed;
+  return null;
+}
+
 function renderInline(text: string): string {
-  // Escape HTML first
+  // Escape HTML first — including quotes so interpolated attribute values
+  // (href/src below) can never break out of their quoting context.
   let s = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 
   // Images
   s = s.replace(
     /!\[([^\]]*)\]\(([^)]+)\)/g,
-    '<img src="$2" alt="$1" class="max-w-full h-auto rounded my-2" />'
+    (_match, alt: string, rawUrl: string) => {
+      const url = safeUrl(rawUrl);
+      return url
+        ? `<img src="${url}" alt="${alt}" class="max-w-full h-auto rounded my-2" />`
+        : alt;
+    }
   );
 
   // Links
   s = s.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" class="text-brand hover:underline" target="_blank" rel="noreferrer">$1</a>'
+    (_match, label: string, rawUrl: string) => {
+      const url = safeUrl(rawUrl);
+      return url
+        ? `<a href="${url}" class="text-brand hover:underline" target="_blank" rel="noreferrer noopener">${label}</a>`
+        : label;
+    }
   );
 
   // Inline code

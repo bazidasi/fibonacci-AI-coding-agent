@@ -3,6 +3,7 @@ import type { ChatMessage } from '@shared/index';
 import { useStore } from '../store/useStore';
 import { Markdown } from './Markdown';
 import { FibonacciLogo } from './Header';
+import { ErrorBoundary } from './ErrorBoundary';
 
 const TOOL_LABELS: Record<string, string> = {
   read_file: 'tool.readFile',
@@ -109,11 +110,20 @@ function getToolTarget(toolName: string, args: Record<string, unknown>): string 
 /** Copy to clipboard with feedback */
 function useCopyFeedback() {
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // FIX: clear the pending timeout on unmount so we never setState after
+  // the bubble is removed (e.g. when tool-call filtering hides it).
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
   const copy = React.useCallback(async (id: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1500);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopiedId(null), 1500);
     } catch { /* clipboard unavailable */ }
   }, []);
   return { copiedId, copy };
@@ -122,6 +132,15 @@ function useCopyFeedback() {
 /* ── Main MessageBubble ── */
 
 export const MessageBubble: React.FC<{
+  message: ChatMessage;
+  isLastAssistant?: boolean;
+}> = (props) => (
+  <ErrorBoundary fallback={<div className="text-status-error text-xs p-1">[message failed to render]</div>}>
+    <MessageBubbleInner {...props} />
+  </ErrorBoundary>
+);
+
+const MessageBubbleInner: React.FC<{
   message: ChatMessage;
   isLastAssistant?: boolean;
 }> = ({ message, isLastAssistant }) => {

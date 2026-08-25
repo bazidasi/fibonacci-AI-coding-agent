@@ -20,6 +20,11 @@ export const Chat: React.FC<ChatProps> = ({ onLoadChat }) => {
   const todos = useStore((s) => s.todos);
   const showToolCalls = useStore((s) => s.showToolCalls);
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // FIX (scroll fighting): track whether the user is near the bottom and only
+  // auto-scroll then — previously every streamed token force-scrolled down,
+  // even while the user was reading an earlier message.
+  const stickToBottomRef = useRef(true);
 
   const visibleMessages = showToolCalls
     ? messages
@@ -34,13 +39,21 @@ export const Chat: React.FC<ChatProps> = ({ onLoadChat }) => {
   })();
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, pendingApprovals.length, todos.length]);
+    if (stickToBottomRef.current) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages.length, pendingApprovals.length, todos.length, messages[messages.length - 1]?.content]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  };
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <ContextBar />
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" ref={scrollRef} onScroll={handleScroll}>
         {visibleMessages.length === 0 && pendingApprovals.length === 0 && todos.length === 0 ? (
           <EmptyState onLoadChat={onLoadChat} />
         ) : (

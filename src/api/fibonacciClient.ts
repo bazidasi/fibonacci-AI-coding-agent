@@ -4,6 +4,43 @@ import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/reso
 import type { ChatCompletionCreateParamsBase, ChatCompletionChunk } from 'openai/resources/chat/completions';
 
 /**
+ * Map a raw API error to a helpful Error. Shared by the pre-stream and
+ * mid-stream catch blocks (previously the same logic was triplicated).
+ */
+function mapApiError(err: unknown, baseURL: string, opts?: { midStream?: boolean }): Error {
+  // err.message can be undefined for OpenAI SDK errors — guard against that.
+  const errMsg = err instanceof Error
+    ? (typeof err.message === 'string' && err.message.length > 0
+        ? err.message
+        : `Unknown ${err.name || 'Error'} (no message)`)
+    : (err != null ? String(err) : 'Unknown error (undefined)');
+
+  if (errMsg.includes('402') || /insufficient credits?/i.test(errMsg)) {
+    return new Error(
+      'اعتبار حساب شما کافی نیست (402 Insufficient credits). لطفاً حساب کاربری خود را شارژ کنید و دوباره تلاش کنید. ' +
+      '(Insufficient credits — please top up your account balance and try again.)'
+    );
+  }
+  if (errMsg.includes('context_length_exceeded') || errMsg.includes('maximum context length')) {
+    return new Error(
+      'مکالمه خیلی طولانی شد (context_length_exceeded). لطفاً گفتگوی جدیدی شروع کنید یا تنظیمات فشرده‌سازی زمینه را بررسی کنید.\n' +
+      '(The conversation is too long. Please start a new chat or check context compression settings.)'
+    );
+  }
+  // The API server may be behind a reverse proxy that returns an HTML error
+  // page (Cloudflare 502, nginx maintenance page, etc.) — the SDK then fails
+  // JSON parsing with "Unexpected token '<'".
+  if (errMsg.includes('Unexpected token') && errMsg.includes('<')) {
+    return new Error(
+      `API server returned an HTML page ${opts?.midStream ? 'mid-stream ' : ''}instead of JSON. This usually means the API endpoint (${baseURL}) is down for maintenance or behind a misconfigured reverse proxy. ` +
+      `Original error: ${errMsg}. Please check the base URL in settings.`
+    );
+  }
+  const prefix = opts?.midStream ? 'Stream interrupted: ' : 'API request failed: ';
+  return new Error(`${prefix}${errMsg}. Check your API key, base URL, and network connection.`);
+}
+
+/**
  * Fibonacci API client — wraps the official OpenAI SDK pointed at the
  * Fibonacci OpenAI-compatible endpoint. Provides streaming chat completions
  * with tool-calling support.
@@ -90,35 +127,7 @@ export class FibonacciClient {
     } catch (err) {
       // Log the full error for debugging, then re-throw with a helpful message.
       console.error('[fibonacci-agent] API request failed:', err);
-      // CRITICAL FIX (bug F): err.message can be undefined for OpenAI SDK errors.
-      // Guard against that to prevent `errMsg.includes(...)` from throwing TypeError.
-      const errMsg = err instanceof Error
-        ? (typeof err.message === 'string' && err.message.length > 0 ? err.message : `Unknown ${err.name || 'Error'} (no message)`)
-        : (err != null ? String(err) : 'Unknown error (undefined)');
-      // CRITICAL FIX (bug #4 in vscode-app-1783401153690.log):
-      // The Fibonacci API returns "402 Insufficient credits" when the user's
-      // account is out of credit. The agent loop was logging this as a
-      // generic "API request failed" error with no actionable guidance.
-      // Detect 402 specifically and surface a clearer message.
-      if (errMsg.includes('402') || /insufficient credits?/i.test(errMsg)) {
-        throw new Error(
-          'اعتبار حساب شما کافی نیست (402 Insufficient credits). لطفاً حساب کاربری خود را شارژ کنید و دوباره تلاش کنید. ' +
-          '(Insufficient credits — please top up your account balance and try again.)'
-        );
-      }
-      // CRITICAL FIX (bug #3 in vscode-app-1783401153690.log):
-      // When the API server is misconfigured or behind a reverse proxy that
-      // returns an HTML error page (e.g. Cloudflare 502, nginx maintenance
-      // page, etc.), the OpenAI SDK tries to parse the response as JSON and
-      // throws "SyntaxError: Unexpected token '<', '<html><hea'... is not
-      // valid JSON". Detect this case and provide a clearer message.
-      if (errMsg.includes('Unexpected token') && errMsg.includes('<')) {
-        throw new Error(
-          `API server returned an HTML page instead of JSON. This usually means the API endpoint (${this.baseURL}) is down for maintenance or behind a misconfigured reverse proxy. ` +
-          `Original error: ${errMsg}. Please check the base URL in settings.`
-        );
-      }
-      throw new Error(`API request failed: ${errMsg}. Check your API key, base URL, and network connection.`);
+      throw mapApiError(err, this.baseURL);
     }
 
     let content = '';
@@ -176,31 +185,16 @@ export class FibonacciClient {
         return { content, toolCalls: [], finishReason: 'abort' };
       }
       console.error('[fibonacci-agent] Stream iteration error:', err);
-      // CRITICAL FIX (bug F): Same guard as above — err.message can be undefined.
-      const errMsg = err instanceof Error
-        ? (typeof err.message === 'string' && err.message.length > 0 ? err.message : `Unknown ${err.name || 'Error'} (no message)`)
-        : (err != null ? String(err) : 'Unknown error (undefined)');
-      // Same 402 detection for mid-stream errors.
-      if (errMsg.includes('402') || /insufficient credits?/i.test(errMsg)) {
-        throw new Error(
-          'اعتبار حساب شما کافی نیست (402 Insufficient credits). لطفاً حساب کاربری خود را شارژ کنید و دوباره تلاش کنید. ' +
-          '(Insufficient credits — please top up your account balance and try again.)'
-        );
-      }
-      // Same HTML-page detection for mid-stream errors.
-      if (errMsg.includes('Unexpected token') && errMsg.includes('<')) {
-        throw new Error(
-          `API server returned an HTML page mid-stream instead of JSON. The connection was likely interrupted by a reverse proxy or maintenance page. ` +
-          `Original error: ${errMsg}.`
-        );
+      if (params.signal?.aborted) {
+        return { content, toolCalls: [], finishReason: 'abort' };
       }
       // Return whatever content was streamed so far, plus an error note.
       // This is more useful than throwing — the user sees partial output
       // and a clear error message rather than a generic crash.
       if (content) {
-        content += `\n\n[Stream interrupted: ${errMsg}]`;
+        content += `\n\n[Stream interrupted: ${mapApiError(err, this.baseURL).message}]`;
       } else {
-        throw new Error(`Stream interrupted: ${errMsg}`);
+        throw mapApiError(err, this.baseURL, { midStream: true });
       }
     }
 
@@ -232,6 +226,7 @@ export class FibonacciClient {
     }
 
     const useModel = model || 'fibonacci-1-pro-max';
+
     try {
       const response = await this.client.chat.completions.create({
         model: useModel,

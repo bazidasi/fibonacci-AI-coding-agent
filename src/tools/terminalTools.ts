@@ -23,6 +23,10 @@ interface RunningTerminal {
 
 const runningTerminals = new Map<string, RunningTerminal>();
 
+// Last output captured by execute_command — surfaced by get_command_output
+// as a fallback (VS Code Terminal API does not expose integrated-terminal stdout).
+let lastCommandOutput = '';
+
 /**
  * CRITICAL FIX (bug T1/T2): Resolve a valid working directory.
  *
@@ -147,7 +151,14 @@ export function registerTerminalTools(
   registry: import('../core/toolRegistry').ToolRegistry,
   _defaultCwd: string
 ): void {
-  registry.register(terminalToolDefinitions[0], async (args) => {
+  // Clean up tracked terminals when the user closes them (prevents unbounded map growth).
+  vscode.window.onDidCloseTerminal((terminal) => {
+    for (const [name, entry] of runningTerminals) {
+      if (entry.terminal === terminal) runningTerminals.delete(name);
+    }
+  });
+
+  registry.register(terminalToolDefinitions[0], async (args, ctx) => {
     // CRITICAL FIX (bug T4): Validate command before executing.
     if (typeof args.command !== 'string' || args.command.trim().length === 0) {
       return { ok: false, output: 'Error: "command" parameter is missing or empty.' };
@@ -169,19 +180,27 @@ export function registerTerminalTools(
       const child = exec(command, { cwd, shell, maxBuffer: 10 * 1024 * 1024, timeout });
       child.stdout?.on('data', (d) => (stdout += d.toString()));
       child.stderr?.on('data', (d) => (stderr += d.toString()));
-      child.on('close', (code) => {
+      // Support cancellation: kill the child when the agent run is aborted.
+      const onAbort = () => {
+        try { child.kill('SIGTERM'); } catch { /* already dead */ }
+      };
+      ctx?.signal?.addEventListener('abort', onAbort, { once: true });
+      const finish = (result: { ok: boolean; output: string; meta?: Record<string, unknown> }) => {
         if (resolved) return;
         resolved = true;
+        ctx?.signal?.removeEventListener('abort', onAbort);
+        resolve(result);
+      };
+      child.on('close', (code) => {
         const out = (stdout + (stderr ? `\n[stderr]\n${stderr}` : '')).slice(-20_000);
-        resolve({
+        lastCommandOutput = `Exit code: ${code}\n${out || '(no output)'}`;
+        finish({
           ok: code === 0,
-          output: `Exit code: ${code}\n${out || '(no output)'}`,
+          output: lastCommandOutput,
           meta: { code },
         });
       });
       child.on('error', (err) => {
-        if (resolved) return;
-        resolved = true;
         // CRITICAL FIX (bug T1): Provide a helpful error message that
         // explains the real cause (cwd or shell issue, not cmd.exe itself).
         const errMsg = err.message;
@@ -190,7 +209,7 @@ export function registerTerminalTools(
           helpful += `\n\nThis usually means the working directory "${cwd}" doesn't exist, or the shell "${shell}" couldn't be found. ` +
             `Try using an absolute path for the working directory, or ensure the command is valid.`;
         }
-        resolve({ ok: false, output: helpful });
+        finish({ ok: false, output: helpful });
       });
     });
   });
@@ -204,24 +223,32 @@ export function registerTerminalTools(
     const name = String(args.name ?? 'fibonacci');
     // CRITICAL FIX (bug T1): Validate cwd.
     const cwd = resolveValidCwd(args.cwd);
-    const terminal = vscode.window.createTerminal({ name, cwd });
+    // Reuse an existing terminal with the same name instead of spawning duplicates.
+    const existing = runningTerminals.get(name);
+    const terminal = existing && !existing.terminal.exitStatus
+      ? existing.terminal
+      : vscode.window.createTerminal({ name, cwd });
     runningTerminals.set(name, { name, terminal, startedAt: Date.now(), lastOutput: '' });
     terminal.show(true);
     terminal.sendText(command);
-    return { ok: true, output: `Command started in terminal "${name}".` };
+    return { ok: true, output: `Command started in terminal "${name}". Note: output cannot be captured from the integrated terminal — use execute_command to capture output.` };
   });
 
   registry.register(terminalToolDefinitions[2], async (args) => {
     const name = String(args.name);
     const entry = runningTerminals.get(name);
     if (!entry) {
+      // Fall back to the last captured execute_command output if the name matches.
+      if (lastCommandOutput) {
+        return { ok: true, output: lastCommandOutput };
+      }
       return { ok: false, output: `Terminal "${name}" not found.` };
     }
-    // VS Code doesn't expose terminal stdout; this is a best-effort placeholder.
     return {
       ok: true,
       output:
         entry.lastOutput ||
+        lastCommandOutput ||
         '(VS Code Terminal API does not allow reading stdout directly. Use execute_command to capture output.)',
     };
   });

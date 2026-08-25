@@ -230,7 +230,11 @@ function formatParameters(
       // ensure type comes through even if no description
       addComma = true;
     }
-    segs.push(`,type:${Q}${typeU || 'STRING'}${Q}`);
+    // FIX (leading comma): only prepend the separator when something was
+    // already emitted — previously an unconditional ",type:" produced
+    // `key:{,type:"NUMBER"}` for schema-less properties.
+    if (segs.length > 0) segs.push(',');
+    segs.push(`type:${Q}${typeU || 'STRING'}${Q}`);
     parts.push(`${key}:{${segs.join('')}}`);
   }
   return parts.join(',');
@@ -304,6 +308,58 @@ export interface ParsedHermesToolCall {
  * Convert an escape sequence (the character after `\`) to its actual character.
  * Handles: \n \t \r \\ \" \' \/ \b \f \uXXXX
  */
+/** Legacy Hermes quote token used in some model outputs. */
+const LEGACY_QUOTE = '<|"|>';
+const LEGACY_Q_LEN = LEGACY_QUOTE.length;
+
+/**
+ * Quote-aware structure scanner. Starting at `start` (which must be `"`,
+ * `{`, `[`, or the legacy quote token), returns the index AFTER the matching
+ * closing delimiter — or -1 if unterminated. Handles backslash escapes and
+ * both regular and legacy quoted strings so braces/brackets inside strings
+ * are never miscounted.
+ */
+function scanStructure(s: string, start: number): number {
+  const open = s[start];
+  const isLegacy = open === '<' && s.substr(start, LEGACY_Q_LEN) === LEGACY_QUOTE;
+  const close =
+    open === '{' ? '}' : open === '[' ? ']' : open === '"' ? '"' : null;
+  if (!close && !isLegacy) return -1;
+
+  let j = start + (isLegacy ? LEGACY_Q_LEN : 1);
+  let depth = 1;
+  while (j < s.length) {
+    const c = s[j];
+    // Regular string
+    if (c === '"') {
+      j++;
+      while (j < s.length) {
+        if (s[j] === '\\') { j += 2; continue; }
+        if (s[j] === '"') break;
+        j++;
+      }
+      j++;
+      continue;
+    }
+    // Legacy string token
+    if (s.substr(j, LEGACY_Q_LEN) === LEGACY_QUOTE) {
+      j += LEGACY_Q_LEN;
+      while (j < s.length && s.substr(j, LEGACY_Q_LEN) !== LEGACY_QUOTE) {
+        if (s[j] === '\\') { j += 2; } else { j++; }
+      }
+      j += LEGACY_Q_LEN;
+      continue;
+    }
+    if (!isLegacy && close && c === open) depth++;
+    else if (!isLegacy && close && c === close) {
+      depth--;
+      if (depth === 0) return j + 1;
+    }
+    j++;
+  }
+  return -1;
+}
+
 function unescapeChar(s: string, j: number): { char: string; consumed: number } {
   const next = s[j + 1];
   if (next === undefined) return { char: '\\', consumed: 1 };
@@ -425,63 +481,41 @@ function parseHermesValue(
   }
   // Object
   if (ch === '{') {
-    let depth = 1;
-    let j = i + 1;
-    while (j < s.length && depth > 0) {
-      if (s[j] === '{') depth++;
-      else if (s[j] === '}') depth--;
-      if (depth === 0) break;
-      j++;
-    }
-    const inner = s.slice(i + 1, j);
-    return { value: parseHermesArgsObject(inner), next: j + 1 };
+    // FIX (quote-blind parsing): use a string-aware scanner — the previous
+    // depth counter mis-parsed values like {content:"}"} because braces
+    // inside quoted strings were counted.
+    const end = scanStructure(s, i);
+    const inner = end > 0 ? s.slice(i + 1, end - 1) : s.slice(i + 1);
+    return { value: parseHermesArgsObject(inner), next: end > 0 ? end : s.length };
   }
   // Array
   if (ch === '[') {
-    let depth = 1;
-    let j = i + 1;
+    // FIX (quote-blind parsing): element scanning now skips strings and
+    // nested structures via the same quote-aware scanner.
     const items: unknown[] = [];
-    let itemStart = j;
-    while (j < s.length && depth > 0) {
-      const c = s[j];
-      if (c === '[') depth++;
-      else if (c === ']') {
-        depth--;
-        if (depth === 0) {
-          const seg = s.slice(itemStart, j).trim();
-          if (seg) {
-            const { value } = parseHermesValue(seg, 0);
-            items.push(value);
-          }
-          break;
-        }
-      } else if (c === ',' && depth === 1) {
-        const seg = s.slice(itemStart, j).trim();
-        if (seg) {
-          const { value } = parseHermesValue(seg, 0);
-          items.push(value);
-        }
-        itemStart = j + 1;
-      } else if (c === '"' || c === '{' || c === '[') {
-        // skip nested structure
-        let d = 1;
-        const quote = c === '"' ? '"' : null;
-        j++;
-        while (j < s.length && d > 0) {
-          if (quote) {
-            if (s[j] === '\\') { j += 2; continue; }
-            if (s[j] === quote) d--;
-          } else {
-            if (s[j] === c) d++;
-            else if (s[j] === (c === '{' ? '}' : ']')) d--;
-          }
-          j++;
-        }
-        continue;
+    let j = i + 1;
+    while (j < s.length) {
+      while (j < s.length && /\s/.test(s[j])) j++;
+      if (j >= s.length) break;
+      if (s[j] === ']') return { value: items, next: j + 1 };
+      let k = j;
+      const chK = s[k];
+      const isStructured =
+        chK === '"' || chK === '{' || chK === '[' ||
+        (chK === '<' && s.substr(k, LEGACY_Q_LEN) === LEGACY_QUOTE);
+      if (isStructured) {
+        const end = scanStructure(s, k);
+        k = end > 0 ? end : s.length;
+      } else {
+        while (k < s.length && s[k] !== ',' && s[k] !== ']') k++;
       }
-      j++;
+      const seg = s.slice(j, k).trim();
+      if (seg) items.push(parseHermesValue(seg, 0).value);
+      j = k;
+      while (j < s.length && /\s/.test(s[j])) j++;
+      if (s[j] === ',') j++;
     }
-    return { value: items, next: j + 1 };
+    return { value: items, next: j };
   }
   // Number
   if (ch === '-' || (ch >= '0' && ch <= '9')) {

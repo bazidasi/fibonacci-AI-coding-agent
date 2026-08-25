@@ -190,8 +190,14 @@ export const memoryToolDefinitions: ToolDefinition[] = [
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function registerMemoryTools(registry: ToolRegistry): void {
-  const mgr = initMemoryManager();
+export function registerMemoryTools(
+  registry: ToolRegistry,
+  context?: vscode.ExtensionContext
+): void {
+  // FIX (storage location): pass the extension context through so memory is
+  // stored under VS Code's globalStorage directory (as documented) instead of
+  // silently falling back to ~/.fibonacci-agent/.
+  const mgr = initMemoryManager(context);
 
   registry.register(memoryToolDefinitions[0], async (args) => {
     const ops = (args.operations as Array<Record<string, unknown>>) ?? [];
@@ -269,13 +275,22 @@ export function registerMemoryTools(registry: ToolRegistry): void {
 }
 
 function formatValue(v: unknown): string {
-  if (v === undefined) return '(undefined)';
-  if (v === null) return 'null';
-  if (typeof v === 'string') return JSON.stringify(v);
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
+  const s =
+    v === undefined
+      ? '(undefined)'
+      : v === null
+        ? 'null'
+        : typeof v === 'string'
+          ? JSON.stringify(v)
+          : typeof v === 'number' || typeof v === 'boolean'
+            ? String(v)
+            : (() => {
+                try {
+                  return JSON.stringify(v);
+                } catch {
+                  return String(v);
+                }
+              })();
+  // Cap echoed values so a huge stored object can't bloat the model context.
+  return s.length > 200 ? s.slice(0, 200) + '…' : s;
 }
